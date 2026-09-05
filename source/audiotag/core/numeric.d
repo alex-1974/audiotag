@@ -10,6 +10,7 @@ The functions are defined for UFCS use with `ByteCursor`.
 module audiotag.core.numeric;
 
 import audiotag.core.cursor : ByteCursor;
+import audiotag.core.error : ParseError, ParseErrorCode;
 import audiotag.core.result : ParseResult;
 
 
@@ -215,7 +216,63 @@ ParseResult!ulong readU64LE(ref ByteCursor cursor)
 }
 
 
-import audiotag.core.error : ParseErrorCode;
+/++
+Reads a four-byte synchsafe unsigned integer.
+
+Each input byte contributes seven payload bits. The most significant
+bit of every byte must be zero, producing a 28-bit value stored in a
+`uint`.
+
+The input is inspected before it is consumed so that both truncated
+and semantically invalid values leave the cursor unchanged.
+
+Returns:
+    The decoded value, `ParseErrorCode.endOfSpan` when fewer than four
+    bytes remain, or `ParseErrorCode.invalidSynchsafeInteger` when an
+    input byte has its most significant bit set.
+
+Error semantics:
+    Failure leaves the cursor unchanged. For an invalid synchsafe
+    integer, the error offset identifies the offending byte.
++/
+ParseResult!uint readSynchsafe32(ref ByteCursor cursor)
+    @safe pure nothrow @nogc
+{
+    auto peeked = cursor.peekBytes(4);
+
+    if (peeked.hasError)
+        return ParseResult!uint.failure(peeked.error);
+
+    const data = peeked.value.data;
+
+    foreach (index, value; data)
+    {
+        if ((value & 0x80) != 0)
+        {
+            return ParseResult!uint.failure(
+                ParseError(
+                    ParseErrorCode.invalidSynchsafeInteger,
+                    peeked.value.sourceOffset + index
+                )
+            );
+        }
+    }
+
+    const value =
+        (cast(uint) data[0] << 21) |
+        (cast(uint) data[1] << 14) |
+        (cast(uint) data[2] << 7) |
+        cast(uint) data[3];
+
+    auto consumed = cursor.skipBytes(4);
+
+    if (consumed.hasError)
+        return ParseResult!uint.failure(consumed.error);
+
+    return ParseResult!uint.success(value);
+}
+
+
 import audiotag.core.span : ByteSpan;
 
 
@@ -346,4 +403,120 @@ unittest
     assert(cursor.position == originalPosition);
     assert(cursor.absoluteOffset == 101);
     assert(cursor.remaining == 2);
+}
+
+
+/// Synchsafe integers decode four seven-bit bytes into a 28-bit value.
+unittest
+{
+    // 00 02 02 74 is the synchsafe representation of 33140.
+    const ubyte[] bytes = [0x00, 0x02, 0x02, 0x74];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.readSynchsafe32();
+
+    assert(result.hasValue);
+    assert(result.value == 33140);
+    assert(cursor.position == 4);
+    assert(cursor.absoluteOffset == 104);
+    assert(cursor.empty);
+}
+
+
+/// Synchsafe decoding handles the minimum and maximum values.
+unittest
+{
+    {
+        const ubyte[] bytes = [0x00, 0x00, 0x00, 0x00];
+
+        auto cursor = ByteCursor(ByteSpan(bytes));
+        auto result = cursor.readSynchsafe32();
+
+        assert(result.hasValue);
+        assert(result.value == 0);
+    }
+
+    {
+        const ubyte[] bytes = [0x7F, 0x7F, 0x7F, 0x7F];
+
+        auto cursor = ByteCursor(ByteSpan(bytes));
+        auto result = cursor.readSynchsafe32();
+
+        assert(result.hasValue);
+        assert(result.value == 0x0FFF_FFFF);
+    }
+}
+
+
+/// A truncated synchsafe integer fails atomically.
+unittest
+{
+    const ubyte[] bytes = [0x00, 0x02, 0x02];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 200));
+    auto result = cursor.readSynchsafe32();
+
+    assert(result.hasError);
+
+    const error = result.error;
+
+    assert(error.code == ParseErrorCode.endOfSpan);
+    assert(error.offset == 200);
+    assert(error.requested == 4);
+    assert(error.available == 3);
+
+    assert(cursor.position == 0);
+    assert(cursor.absoluteOffset == 200);
+    assert(cursor.remaining == 3);
+}
+
+
+/// Every byte of a synchsafe integer must have its high bit clear.
+unittest
+{
+    foreach (invalidIndex; 0 .. 4)
+    {
+        ubyte[] bytes = [0x01, 0x02, 0x03, 0x04];
+        bytes[invalidIndex] |= 0x80;
+
+        auto cursor = ByteCursor(ByteSpan(bytes, 100));
+        auto result = cursor.readSynchsafe32();
+
+        assert(result.hasError);
+
+        const error = result.error;
+
+        assert(
+            error.code ==
+            ParseErrorCode.invalidSynchsafeInteger
+        );
+        assert(error.offset == 100 + invalidIndex);
+        assert(error.requested == 0);
+        assert(error.available == 0);
+
+        assert(cursor.position == 0);
+        assert(cursor.absoluteOffset == 100);
+        assert(cursor.remaining == 4);
+    }
+}
+
+
+/// Synchsafe reads respect an already advanced cursor.
+unittest
+{
+    const ubyte[] bytes =
+        [0x99, 0x00, 0x02, 0x02, 0x74, 0x55];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 500));
+    cursor.popFront();
+
+    auto result = cursor.readSynchsafe32();
+
+    assert(result.hasValue);
+    assert(result.value == 33140);
+
+    assert(cursor.position == 5);
+    assert(cursor.absoluteOffset == 505);
+    assert(cursor.remaining == 1);
+    assert(cursor.front == 0x55);
 }

@@ -28,6 +28,9 @@ enum ParseErrorCode : ubyte
     /// An integer operation or decoded size would overflow.
     integerOverflow,
 
+    /// A byte in a synchsafe integer has its most significant bit set.
+    invalidSynchsafeInteger,
+
     /// An encoding marker or discriminator is not valid.
     invalidEncodingMarker
 }
