@@ -30,6 +30,7 @@ struct Id3v24DataCursor
 private:
     ByteSpan _span;
     ByteCursor _cursor;
+    size_t _logicalPosition;
     bool _unsynchronised;
 
 public:
@@ -46,6 +47,7 @@ public:
     {
         _span = span;
         _cursor = ByteCursor(span);
+        _logicalPosition = 0;
         _unsynchronised = unsynchronised;
     }
 
@@ -55,6 +57,14 @@ public:
         @safe pure nothrow @nogc
     {
         return _cursor.position;
+    }
+
+    /// Number of logical bytes consumed after unsynchronisation decoding.
+    @property
+    size_t logicalPosition() const
+        @safe pure nothrow @nogc
+    {
+        return _logicalPosition;
     }
 
     /// Absolute physical source offset of the next unread byte.
@@ -120,8 +130,19 @@ public:
     {
         if (_unsynchronised)
         {
-            return _cursor
-                .takeId3v24UnsynchronisedByte();
+            auto result =
+                _cursor.takeId3v24UnsynchronisedByte();
+
+            if (result.hasError)
+            {
+                return ParseResult!Id3v24DecodedByte.failure(
+                    result.error
+                );
+            }
+
+            ++_logicalPosition;
+
+            return result;
         }
 
         auto result = _cursor.takeBytes(1);
@@ -132,6 +153,8 @@ public:
                 result.error
             );
         }
+
+        ++_logicalPosition;
 
         return ParseResult!Id3v24DecodedByte.success(
             Id3v24DecodedByte(
@@ -403,4 +426,130 @@ unittest
     assert(second.value.sourceOffset == 1003);
 
     assert(cursor.empty);
+}
+
+
+/// Logical and physical positions are identical without stuffing bytes.
+unittest
+{
+    const ubyte[] bytes =
+        [0x11, 0x22];
+
+    auto cursor =
+        Id3v24DataCursor(
+            ByteSpan(bytes, 2000),
+            false
+        );
+
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+
+    auto first = cursor.takeByte();
+
+    assert(first.hasValue);
+    assert(cursor.logicalPosition == 1);
+    assert(cursor.physicalPosition == 1);
+
+    auto second = cursor.takeByte();
+
+    assert(second.hasValue);
+    assert(cursor.logicalPosition == 2);
+    assert(cursor.physicalPosition == 2);
+}
+
+
+/// Stuffing removal advances physical and logical positions differently.
+unittest
+{
+    const ubyte[] bytes =
+        [0xFF, 0x00, 0x42];
+
+    auto cursor =
+        Id3v24DataCursor(
+            ByteSpan(bytes, 2100),
+            true
+        );
+
+    auto first = cursor.takeByte();
+
+    assert(first.hasValue);
+    assert(first.value.value == 0xFF);
+
+    assert(cursor.logicalPosition == 1);
+    assert(cursor.physicalPosition == 2);
+
+    auto second = cursor.takeByte();
+
+    assert(second.hasValue);
+    assert(second.value.value == 0x42);
+
+    assert(cursor.logicalPosition == 2);
+    assert(cursor.physicalPosition == 3);
+}
+
+
+/// Failed byte reads do not advance the logical position.
+unittest
+{
+    const ubyte[] bytes = [];
+
+    auto cursor =
+        Id3v24DataCursor(
+            ByteSpan(bytes, 2200),
+            true
+        );
+
+    auto result = cursor.takeByte();
+
+    assert(result.hasError);
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+}
+
+
+/// Successful synchsafe reads consume four logical bytes.
+unittest
+{
+    const ubyte[] bytes =
+        [0x00, 0x00, 0x00, 0x01];
+
+    auto cursor =
+        Id3v24DataCursor(
+            ByteSpan(bytes, 2300),
+            false
+        );
+
+    auto result = cursor.takeSynchsafe32();
+
+    assert(result.hasValue);
+    assert(result.value == 1);
+
+    assert(cursor.logicalPosition == 4);
+    assert(cursor.physicalPosition == 4);
+}
+
+
+/// Failed synchsafe reads roll back both logical and physical positions.
+unittest
+{
+    const ubyte[] bytes =
+        [0x00, 0x00, 0x80, 0x01];
+
+    auto cursor =
+        Id3v24DataCursor(
+            ByteSpan(bytes, 2400),
+            false
+        );
+
+    auto result = cursor.takeSynchsafe32();
+
+    assert(result.hasError);
+    assert(
+        result.error.code ==
+        ParseErrorCode.invalidSynchsafeInteger
+    );
+
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+    assert(cursor.absoluteOffset == 2400);
 }
