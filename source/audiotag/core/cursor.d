@@ -182,6 +182,38 @@ struct ByteCursor
 
         return result;
     }
+
+
+    /++
+    Consumes and returns up to `count` bytes.
+
+    Unlike `takeBytes`, this operation is explicitly partial and cannot
+    fail because fewer than `count` bytes remain. It consumes all
+    remaining bytes when `count` exceeds the available length.
+
+    Params:
+        count = Maximum number of bytes to consume.
+
+    Returns:
+        A span containing between zero and `count` bytes.
+
+    Note:
+        A zero-length request succeeds without changing the cursor.
+    +/
+    ByteSpan takeAvailable(size_t count)
+        @safe pure nothrow @nogc
+    {
+        const actual =
+            count < remaining
+                ? count
+                : remaining;
+
+        const result = _span.subspan(_position, actual);
+
+        _position += actual;
+
+        return result;
+    }
 }
 
 
@@ -389,5 +421,79 @@ unittest
     assert(taken.value.empty);
     assert(taken.value.sourceOffset == 101);
     assert(cursor.position == 1);
+    assert(cursor.empty);
+}
+
+
+/// takeAvailable consumes at most the requested number of bytes.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+    const ubyte[] expected = [0x10, 0x20];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    const result = cursor.takeAvailable(2);
+
+    assert(result.data == expected);
+    assert(result.sourceOffset == 100);
+    assert(cursor.position == 2);
+    assert(cursor.absoluteOffset == 102);
+    assert(cursor.remaining == 2);
+}
+
+
+/// takeAvailable consumes all remaining bytes when the request is larger.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const result = cursor.takeAvailable(10);
+
+    assert(result.length == 2);
+    assert(result.sourceOffset == 101);
+    assert(result.data == bytes[1 .. $]);
+
+    assert(cursor.position == 3);
+    assert(cursor.absoluteOffset == 103);
+    assert(cursor.remaining == 0);
+    assert(cursor.empty);
+}
+
+
+/// takeAvailable accepts a zero-length request without advancing.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const result = cursor.takeAvailable(0);
+
+    assert(result.empty);
+    assert(result.sourceOffset == 101);
+    assert(cursor.position == 1);
+    assert(cursor.absoluteOffset == 101);
+    assert(cursor.remaining == 1);
+}
+
+
+/// takeAvailable on an empty cursor returns an empty end-position span.
+unittest
+{
+    const ubyte[] bytes = [0x10];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const result = cursor.takeAvailable(5);
+
+    assert(result.empty);
+    assert(result.sourceOffset == 101);
+    assert(cursor.position == 1);
+    assert(cursor.absoluteOffset == 101);
     assert(cursor.empty);
 }
