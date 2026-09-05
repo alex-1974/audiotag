@@ -1,17 +1,15 @@
 /++
 Central canonical dispatcher for one native ID3v2.4 frame.
 
-The native ID3v2.4 layer has already classified every structurally
-valid frame into one semantic outcome type. This module routes that
-native outcome to the corresponding canonical mapper.
+The native layer has already classified every structurally valid frame
+into one semantic outcome type. This module only routes that outcome to
+the corresponding canonical mapper.
 
-No frame parsing, semantic decoding or identifier heuristics are
+No parsing, semantic decoding or frame-identifier heuristics are
 performed here.
 
-Unknown native frames remain valid native metadata and produce
-`unsupportedFrame`. Transformation-pending and currently
-unrepresentable semantic values retain the result returned by their
-family mapper.
+Unknown native frames remain valid native metadata and return
+`unsupportedFrame`.
 +/
 module audiotag.id3v2.v24.canonical_dispatch;
 
@@ -77,21 +75,16 @@ import audiotag.id3v2.v24.user_url :
 /++
 Maps one unified native ID3v2.4 frame to canonical metadata.
 
-The semantic native outcome type selects the appropriate family mapper.
-That family mapper remains responsible for:
-
-- deciding whether the particular native identifier is supported;
-- propagating transformation-pending state;
-- detecting currently unrepresentable canonical value shapes;
-- constructing canonical values, qualifiers and provenance.
-
-Unknown native frames return `unsupportedFrame`.
+The native semantic outcome type selects the appropriate existing
+family mapper. Transformation-pending and unrepresentable states are
+therefore propagated unchanged by that mapper.
 
 Params:
-    native = Unified provenance-preserving native ID3v2.4 frame.
+    native = Unified native ID3v2.4 frame.
 
 Returns:
-    Result of the selected canonical family mapper.
+    Result of the selected canonical family mapper, or
+    `unsupportedFrame` for an unknown native frame.
 +/
 Id3v24CanonicalMappingResult
 mapId3v24NativeFrameToCanonical(
@@ -183,20 +176,10 @@ version (unittest)
     )
         @safe
     {
-        assert(
-            actual.status ==
-            expected.status
-        );
+        assert(actual.status == expected.status);
+        assert(actual.mapped == expected.mapped);
 
-        assert(
-            actual.mapped ==
-            expected.mapped
-        );
-
-        if (
-            actual.mapped &&
-            expected.mapped
-        )
+        if (actual.mapped)
         {
             assert(
                 actual.field.key.name ==
@@ -211,17 +194,11 @@ version (unittest)
 unittest
 {
     Id3v24TextInformationOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativeTextFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativeTextFrameToCanonical(native)
     );
 }
 
@@ -230,17 +207,11 @@ unittest
 unittest
 {
     Id3v24UserTextOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativeUserTextFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativeUserTextFrameToCanonical(native)
     );
 }
 
@@ -249,17 +220,11 @@ unittest
 unittest
 {
     Id3v24UrlLinkOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativeUrlFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativeUrlFrameToCanonical(native)
     );
 }
 
@@ -268,17 +233,11 @@ unittest
 unittest
 {
     Id3v24UserUrlOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativeUrlFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativeUrlFrameToCanonical(native)
     );
 }
 
@@ -287,17 +246,11 @@ unittest
 unittest
 {
     Id3v24CommentOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativeLanguageTextFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativeLanguageTextFrameToCanonical(native)
     );
 }
 
@@ -306,17 +259,11 @@ unittest
 unittest
 {
     Id3v24LyricsTextOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativeLanguageTextFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativeLanguageTextFrameToCanonical(native)
     );
 }
 
@@ -325,17 +272,11 @@ unittest
 unittest
 {
     Id3v24AttachedPictureOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativePictureFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativePictureFrameToCanonical(native)
     );
 }
 
@@ -344,17 +285,11 @@ unittest
 unittest
 {
     Id3v24PrivateOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativePrivateFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativePrivateFrameToCanonical(native)
     );
 }
 
@@ -363,17 +298,11 @@ unittest
 unittest
 {
     Id3v24UniqueFileIdentifierOutcome outcome;
-
-    auto native =
-        testNative(outcome);
+    auto native = testNative(outcome);
 
     assertSameMapping(
-        mapId3v24NativeFrameToCanonical(
-            native
-        ),
-        mapId3v24NativeUniqueFileIdentifierFrameToCanonical(
-            native
-        )
+        mapId3v24NativeFrameToCanonical(native),
+        mapId3v24NativeUniqueFileIdentifierFrameToCanonical(native)
     );
 }
 
