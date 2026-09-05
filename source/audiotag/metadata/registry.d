@@ -266,6 +266,18 @@ private immutable MetadataFieldDefinition[] definitions =
         MetadataKey("userText"),
         MetadataValueKind.text,
         MetadataMultiplicity.repeated
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("privateData"),
+        MetadataValueKind.binary,
+        MetadataMultiplicity.repeated
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("uniqueFileIdentifier"),
+        MetadataValueKind.binary,
+        MetadataMultiplicity.repeated
     )
 ];
 
@@ -527,6 +539,50 @@ unittest
 }
 
 
+/// Opaque private metadata is repeatable canonical binary data.
+unittest
+{
+    auto definition =
+        findMetadataFieldDefinition(
+            MetadataKey("privateData")
+        );
+
+    assert(definition.found);
+
+    assert(
+        definition.definition.valueKind ==
+        MetadataValueKind.binary
+    );
+
+    assert(
+        definition.definition.multiplicity ==
+        MetadataMultiplicity.repeated
+    );
+}
+
+
+/// Unique file identifiers are repeatable canonical binary data.
+unittest
+{
+    auto definition =
+        findMetadataFieldDefinition(
+            MetadataKey("uniqueFileIdentifier")
+        );
+
+    assert(definition.found);
+
+    assert(
+        definition.definition.valueKind ==
+        MetadataValueKind.binary
+    );
+
+    assert(
+        definition.definition.multiplicity ==
+        MetadataMultiplicity.repeated
+    );
+}
+
+
 /// Unknown canonical keys remain explicitly unregistered.
 unittest
 {
@@ -545,7 +601,7 @@ unittest
     const registry =
         metadataFieldDefinitions();
 
-    assert(registry.length == 16);
+    assert(registry.length == 18);
 
     assert(registry[0].key.name == "title");
     assert(registry[1].key.name == "artist");
@@ -563,4 +619,6 @@ unittest
     assert(registry[13].key.name == "publisherUrl");
     assert(registry[14].key.name == "userUrl");
     assert(registry[15].key.name == "userText");
+    assert(registry[16].key.name == "privateData");
+    assert(registry[17].key.name == "uniqueFileIdentifier");
 }
