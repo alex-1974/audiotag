@@ -6,5 +6,6 @@ bounded, range-oriented binary parsing.
 +/
 module audiotag.core;
 
+public import audiotag.core.cursor;
 public import audiotag.core.error;
 public import audiotag.core.span;
