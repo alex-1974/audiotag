@@ -39,6 +39,9 @@ import audiotag.id3v2.v24.canonical_mapping :
 import audiotag.id3v2.v24.data_cursor :
     Id3v24DataCursor;
 
+import audiotag.id3v2.v24.logical_bytes :
+    copyId3v24LogicalBytes;
+
 import audiotag.id3v2.v24.native_frame :
     Id3v24NativeFrame;
 
@@ -204,42 +207,14 @@ private MetadataBinary makeEmbeddedPictureBinary(
 )
     @safe
 {
-    if (!frame.effectiveUnsynchronisation)
-    {
-        return MetadataBinary.copyFrom(
-            frame.rawPictureData.data,
-            frame.mimeType
-        );
-    }
-
-    auto cursor =
-        Id3v24DataCursor(
+    auto logical =
+        copyId3v24LogicalBytes(
             frame.rawPictureData,
-            true
+            frame.effectiveUnsynchronisation
         );
-
-    ubyte[] logical =
-        new ubyte[
-            frame.rawPictureData.length
-        ];
-
-    size_t logicalLength = 0;
-
-    while (!cursor.empty)
-    {
-        auto byteResult =
-            cursor.takeByte();
-
-        assert(byteResult.hasValue);
-
-        logical[logicalLength] =
-            byteResult.value.value;
-
-        ++logicalLength;
-    }
 
     return MetadataBinary.copyFrom(
-        logical[0 .. logicalLength],
+        logical,
         frame.mimeType
     );
 }
