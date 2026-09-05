@@ -81,32 +81,50 @@ including:
 
 ### 1.5 Numeric primitives
 
-Implement:
+Implemented:
 
 ```text
 U16/U24/U32/U64 LE/BE
 synchsafe integer
-alignment helpers
 ```
+
+Generic alignment helpers are deferred until a structural format provides
+a concrete alignment-origin requirement. Aligned pattern search is already
+implemented.
 
 ## Phase 2 — ID3v2.4 structural parser
 
+Status: strict structural parsing milestone implemented.
+
 Goal: use the new core against a real, complex tag system.
 
-Implement:
+Implemented:
 
-- ID3 signature and header;
-- tag-size bounds;
-- extended header;
-- frame range;
-- frame-size/flag parsing;
-- padding;
-- footer;
-- unknown frame preservation;
-- raw payload spans;
-- structured diagnostics.
+- ID3 signature, version and header validation;
+- bounded tag body derived from the declared tag size;
+- extended-header parsing;
+- validated optional footer;
+- bounded frame sequence;
+- synchsafe frame-size and frame-flag parsing;
+- exact frame-data bounds;
+- tag-level and frame-level unsynchronisation traversal;
+- structural parsing of grouping identity, encryption method and Data Length Indicator fields;
+- strict padding validation;
+- raw frame and payload spans with absolute source offsets;
+- end-to-end transactional parsing of a complete ID3v2.4 tag.
 
-Do not yet attempt every semantic frame codec.
+The strict structural parser has also been exercised successfully against
+a real ID3v2.4 tag during development. The audio sample is not part of
+the repository or automated test corpus.
+
+Still pending before this phase is fully complete:
+
+- higher-level structured diagnostics and recovery information;
+- explicit native-node representation for unknown frames beyond the raw
+  structural spans already preserved;
+- CRC verification when an extended-header CRC is present.
+
+Semantic frame codecs are deliberately deferred to Phase 3.
 
 ## Phase 3 — Text and common ID3 frame codecs
 

@@ -43,6 +43,10 @@ The legacy code currently contains:
 
 The format-independent binary parsing core is now implemented. It includes bounded zero-copy `ByteSpan` views, stateful `ByteCursor` traversal, structured allocation-light parse errors and results, exact and partial byte consumption, bounded and aligned pattern search, endian integer readers, and validated synchsafe integer decoding.
 
+A new strict ID3v2.4 structural parser is also implemented independently of the legacy proof of concept. It validates and bounds the tag header and body, optional extended header and footer, frame sequence, frame headers and data, unsynchronisation, frame-format prefix fields, and padding. Raw frame and payload spans retain absolute source offsets, and the complete parse is transactional: a structural failure leaves the caller's cursor unchanged.
+
+Semantic ID3 frame codecs, higher-level diagnostics, CRC verification, canonical metadata nodes and writing are still under development.
+
 Known legacy issues are intentionally being left isolated rather than fixed opportunistically during the core rewrite.
 
 ## Core design
