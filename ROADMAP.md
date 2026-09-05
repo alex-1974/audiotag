@@ -159,32 +159,56 @@ The codecs preserve native/raw provenance where required. Structurally valid com
 
 ## Phase 4 — Canonical metadata tree
 
-Define typed, provenance-aware metadata representation supporting:
+Status: **initial canonical integration milestone complete**.
 
-- text;
-- multi-value text;
-- integer/count structures;
-- URLs;
-- pictures;
-- binary values;
-- nested values;
-- scope;
-- language;
-- native identifiers;
-- unknown nodes;
-- raw provenance.
+Implemented:
 
-Create canonical field registry independent of tag versions.
+- typed canonical values for text, ordered multi-value text, integers,
+  URLs, binary data and pictures;
+- provenance carrying native metadata identifiers, source extents and
+  confidence;
+- ordered repeatable canonical fields;
+- canonical language, descriptions and ordered qualifiers;
+- format-independent canonical field registry;
+- ID3v2.4 mappings for the currently implemented semantic frame
+  families;
+- shared canonical mapping outcomes:
+  `mapped`, `unsupportedFrame`, `requiresTransformation` and
+  `unrepresentableValueShape`;
+- central native-frame → canonical dispatcher;
+- provenance-preserving frame projection retaining every native frame
+  in original order;
+- complete native-plus-canonical ID3v2.4 whole-tag view.
+
+The canonical tree is deliberately a semantic view rather than a
+replacement for native metadata. Native frames remain available for
+roundtrip-aware writing even when they map successfully.
+
+Still pending:
+
+- broader canonical coverage as further native frame codecs are added;
+- higher-level structured diagnostics and recovery information;
+- stable public API design.
 
 ## Phase 5 — ID3 writer
 
+Status: **next implementation phase**.
+
+Begin with an explicit preservation and mutation policy before byte
+serialization.
+
 Implement:
 
-- ID3v2.4 serialization;
-- stable roundtrip;
-- unknown-frame preservation policy;
+- policy for unchanged, modified, unsupported,
+  transformation-pending and unrepresentable native frames;
+- handling of ID3 frame preservation and read-only flags;
+- ID3v2.4 frame serialization;
+- ID3v2.4 tag serialization;
+- extended-header / CRC policy;
+- unsynchronisation policy;
 - padding strategy;
-- parse → write → parse tests.
+- separation of metadata serialization from enclosing-file updating;
+- stable parse → write → parse roundtrip tests.
 
 ## Phase 6 — ID3 version family
 

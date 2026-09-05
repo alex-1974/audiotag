@@ -41,9 +41,14 @@ The active implementation now includes:
 - robust ISO-8859-1, UTF-8, UTF-16 with BOM and UTF-16BE text decoding;
 - native/provenance-aware semantic codecs for `T***`, `TXXX`, `W***`, `WXXX`, `COMM`, `USLT`, `APIC`, `PRIV` and `UFID`;
 - preservation of physical raw spans alongside decoded values;
-- explicit transformation-pending outcomes for structurally valid compressed or encrypted frame payloads that cannot yet be decoded.
+- explicit transformation-pending outcomes for structurally valid compressed or encrypted frame payloads that cannot yet be decoded;
+- a typed, ordered and provenance-aware canonical metadata tree and field registry;
+- canonical mappings for the currently implemented ID3v2.4 semantic frame families;
+- a central native-frame → canonical dispatcher;
+- provenance-preserving canonical projection that retains every native frame and its original ordering;
+- a transactional whole-tag ID3v2.4 read path exposing both the complete validated native structure and its canonical metadata view.
 
-The current implementation boundary is the native ID3v2.4 metadata layer. The version-independent canonical metadata tree, ID3 writer, tolerant/recovery diagnostics and additional metadata systems remain later roadmap phases.
+The current implementation boundary is the canonical ID3v2.4 reader. ID3 writing, tolerant/recovery diagnostics, broader frame coverage, additional metadata systems and a stable public API remain later roadmap work.
 
 Known legacy issues are intentionally being left isolated rather than fixed opportunistically during the new implementation.
 
