@@ -31,6 +31,9 @@ enum ParseErrorCode : ubyte
     /// Reserved or otherwise invalid structural flags are set.
     invalidFlags,
 
+    /// Related structural fields contradict each other.
+    inconsistentStructure,
+
     /// A length value is invalid for the surrounding structure.
     invalidLength,
 
