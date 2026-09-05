@@ -154,7 +154,7 @@ Returns:
 +/
 Id3v24UnregenerableFrameAction
 decideId3v24UnregenerableFrameAction(
-    Id3v24FrameHeader header,
+    const(Id3v24FrameHeader) header,
     Id3v24WriteContext context,
     Id3v24WriterPolicy policy =
         Id3v24WriterPolicy.init
@@ -220,7 +220,7 @@ Returns:
 +/
 Id3v24MappedFrameModificationAction
 decideId3v24MappedFrameModificationAction(
-    Id3v24FrameHeader header
+    const(Id3v24FrameHeader) header
 )
     @safe pure nothrow @nogc
 {
