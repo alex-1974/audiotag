@@ -44,7 +44,13 @@ enum ParseErrorCode : ubyte
     invalidSynchsafeInteger,
 
     /// An encoding marker or discriminator is not valid.
-    invalidEncodingMarker
+    invalidEncodingMarker,
+
+    /// A required Unicode byte-order mark is missing or invalid.
+    invalidByteOrderMark,
+
+    /// Encoded text contains an invalid Unicode sequence.
+    invalidUnicodeSequence
 }
 
 
