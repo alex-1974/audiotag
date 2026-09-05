@@ -520,3 +520,31 @@ unittest
     assert(cursor.remaining == 1);
     assert(cursor.front == 0x55);
 }
+
+
+/// Invalid synchsafe bytes report absolute offsets after cursor advancement.
+unittest
+{
+    const ubyte[] bytes =
+        [0x99, 0x01, 0x02, 0x83, 0x04, 0x55];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 500));
+    cursor.popFront();
+
+    const originalPosition = cursor.position;
+    auto result = cursor.readSynchsafe32();
+
+    assert(result.hasError);
+    assert(
+        result.error.code ==
+        ParseErrorCode.invalidSynchsafeInteger
+    );
+
+    // Parsing starts at absolute offset 501.
+    // The invalid third synchsafe byte is therefore at 503.
+    assert(result.error.offset == 503);
+
+    assert(cursor.position == originalPosition);
+    assert(cursor.absoluteOffset == 501);
+    assert(cursor.remaining == 5);
+}
