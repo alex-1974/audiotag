@@ -1,0 +1,7 @@
+name "audiotag"
+description "A minimal D application."
+authors "Alexander Bernardi"
+copyright "Copyright © 2024, Alexander Bernardi"
+license "CC-BY-SA-4.0"
+targetType "library"
+dflags "-J."

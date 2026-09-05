@@ -1,0 +1,37 @@
+# D / DUB build output
+.dub/
+dub.selections.json
+docs.json
+
+# Compiled objects and libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+
+# Executables
+audiotag-test-library
+audiotag-test-library.exe
+
+# Generated documentation
+docs/api/
+
+# Coverage
+*.lst
+*.cov
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local test music
+music/
