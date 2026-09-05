@@ -13,7 +13,7 @@ Fallible exact and partial byte operations are added separately.
 module audiotag.core.cursor;
 
 import audiotag.core.error : ParseError, ParseErrorCode;
-import audiotag.core.result : ParseResult;
+import audiotag.core.result : ParseResult, ParseStatus;
 import audiotag.core.span : ByteSpan;
 
 
@@ -213,6 +213,41 @@ struct ByteCursor
         _position += actual;
 
         return result;
+    }
+
+
+    /++
+    Advances the cursor by exactly `count` bytes.
+
+    Params:
+        count = Number of bytes to skip.
+
+    Returns:
+        A successful status when exactly `count` bytes can be skipped,
+        or `ParseErrorCode.endOfSpan` when fewer bytes remain.
+
+    Error semantics:
+        On success the cursor advances by exactly `count` bytes.
+        On failure the cursor position is unchanged.
+    +/
+    ParseStatus skipBytes(size_t count)
+        @safe pure nothrow @nogc
+    {
+        if (count > remaining)
+        {
+            return ParseStatus.failure(
+                ParseError(
+                    ParseErrorCode.endOfSpan,
+                    absoluteOffset,
+                    count,
+                    remaining
+                )
+            );
+        }
+
+        _position += count;
+
+        return ParseStatus.success();
     }
 }
 
@@ -496,4 +531,106 @@ unittest
     assert(cursor.position == 1);
     assert(cursor.absoluteOffset == 101);
     assert(cursor.empty);
+}
+
+
+/// skipBytes advances by exactly the requested number of bytes.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto status = cursor.skipBytes(2);
+
+    assert(status.succeeded);
+    assert(!status.hasError);
+    assert(cursor.position == 2);
+    assert(cursor.absoluteOffset == 102);
+    assert(cursor.remaining == 2);
+    assert(cursor.front == 0x30);
+}
+
+
+/// skipBytes may advance exactly to the end of the span.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 50));
+    auto status = cursor.skipBytes(3);
+
+    assert(status.succeeded);
+    assert(cursor.position == 3);
+    assert(cursor.absoluteOffset == 53);
+    assert(cursor.remaining == 0);
+    assert(cursor.empty);
+}
+
+
+/// skipBytes failure reports bounds and leaves the cursor unchanged.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const originalPosition = cursor.position;
+    auto status = cursor.skipBytes(3);
+
+    assert(status.hasError);
+    assert(!status.succeeded);
+
+    const error = status.error;
+
+    assert(error.code == ParseErrorCode.endOfSpan);
+    assert(error.offset == 101);
+    assert(error.requested == 3);
+    assert(error.available == 2);
+
+    assert(cursor.position == originalPosition);
+    assert(cursor.absoluteOffset == 101);
+    assert(cursor.remaining == 2);
+}
+
+
+/// skipBytes accepts a zero-length request without advancing.
+unittest
+{
+    const ubyte[] bytes = [0x10];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    auto status = cursor.skipBytes(0);
+
+    assert(status.succeeded);
+    assert(cursor.position == 1);
+    assert(cursor.absoluteOffset == 101);
+    assert(cursor.empty);
+}
+
+
+/// skipBytes on an empty cursor fails only for a nonzero request.
+unittest
+{
+    const ubyte[] bytes = [];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 42));
+
+    auto zero = cursor.skipBytes(0);
+
+    assert(zero.succeeded);
+    assert(cursor.position == 0);
+
+    auto one = cursor.skipBytes(1);
+
+    assert(one.hasError);
+    assert(one.error.code == ParseErrorCode.endOfSpan);
+    assert(one.error.offset == 42);
+    assert(one.error.requested == 1);
+    assert(one.error.available == 0);
+
+    assert(cursor.position == 0);
+    assert(cursor.absoluteOffset == 42);
 }
