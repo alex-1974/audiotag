@@ -2,7 +2,7 @@
 
 `audiotag` is an early-stage D library for reading, normalizing, preserving, converting, and writing metadata in common audio file formats.
 
-> **Project status:** proof of concept / architecture phase.
+> **Project status:** active parser implementation / architecture phase.
 > The public API and internal module structure are not stable yet.
 
 ## Goals
@@ -31,23 +31,21 @@ The current phase is **not** trying to:
 
 ## Current state
 
-The repository began as an experimental ID3 proof of concept.
+The repository began as an experimental ID3 proof of concept. That legacy code remains isolated while the active implementation is developed under the new bounded-parser architecture.
 
-The legacy code currently contains:
+The active implementation now includes:
 
-- basic audio-header detection for ID3, FLAC and Ogg signatures;
-- experimental ID3v2 header/frame parsing;
-- experimental ID3 text decoding;
-- a compile-time ID3 frame registry generated from CSV;
-- proof-of-concept D ranges for frames.
+- a format-independent binary core based on `ByteSpan`, `ByteCursor`, structured `ParseResult` / `ParseError`, bounded pattern operations and endian/synchsafe integer readers;
+- a strict, bounded ID3v2.4 structural parser for tag headers, extended headers, frames, padding, footers and frame-data prefixes;
+- ID3v2.4 byte-unsynchronisation handling with physical source-offset provenance;
+- robust ISO-8859-1, UTF-8, UTF-16 with BOM and UTF-16BE text decoding;
+- native/provenance-aware semantic codecs for `T***`, `TXXX`, `W***`, `WXXX`, `COMM`, `USLT`, `APIC`, `PRIV` and `UFID`;
+- preservation of physical raw spans alongside decoded values;
+- explicit transformation-pending outcomes for structurally valid compressed or encrypted frame payloads that cannot yet be decoded.
 
-The format-independent binary parsing core is now implemented. It includes bounded zero-copy `ByteSpan` views, stateful `ByteCursor` traversal, structured allocation-light parse errors and results, exact and partial byte consumption, bounded and aligned pattern search, endian integer readers, and validated synchsafe integer decoding.
+The current implementation boundary is the native ID3v2.4 metadata layer. The version-independent canonical metadata tree, ID3 writer, tolerant/recovery diagnostics and additional metadata systems remain later roadmap phases.
 
-A new strict ID3v2.4 structural parser is also implemented independently of the legacy proof of concept. It validates and bounds the tag header and body, optional extended header and footer, frame sequence, frame headers and data, unsynchronisation, frame-format prefix fields, and padding. Raw frame and payload spans retain absolute source offsets, and the complete parse is transactional: a structural failure leaves the caller's cursor unchanged.
-
-Semantic ID3 frame codecs, higher-level diagnostics, CRC verification, canonical metadata nodes and writing are still under development.
-
-Known legacy issues are intentionally being left isolated rather than fixed opportunistically during the core rewrite.
+Known legacy issues are intentionally being left isolated rather than fixed opportunistically during the new implementation.
 
 ## Core design
 
@@ -73,7 +71,7 @@ target-format writer
 
 Every nested parser receives a bounded byte region and must not read outside it.
 
-Important primitive operations will include:
+Implemented core operations include:
 
 ```text
 takeBytes(n)                  exact, atomic consumption
@@ -146,6 +144,8 @@ Real commercial music files under the local `music/` directory are intentionally
 ├── source/
 │   └── audiotag/
 │       ├── core/
+│       ├── id3v2/
+│       │   └── v24/
 │       ├── id3.d
 │       ├── id3_utils.d
 │       ├── id3v2_4_frame.d

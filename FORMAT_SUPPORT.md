@@ -12,7 +12,7 @@ Legend:
 
 | File/container | Metadata/tag system | Read | Write | Status / notes |
 |---|---|---:|---:|---|
-| MPEG Audio / MP3 | ID3v2.4 | POC | — | Legacy experimental parser; new parser planned |
+| MPEG Audio / MP3 | ID3v2.4 | Core | — | Strict bounded structural parser plus initial semantic codecs (`T***`, `TXXX`, `W***`, `WXXX`, `COMM`, `USLT`, `APIC`, `PRIV`, `UFID`); canonical model, writer and broader recovery behavior pending |
 | MPEG Audio / MP3 | ID3v2.3 | POC | — | Legacy parser reads header but applies incomplete version-specific rules |
 | MPEG Audio / MP3 | ID3v2.2 | — | — | Planned |
 | MPEG Audio / MP3 | ID3v1 | — | — | Planned |

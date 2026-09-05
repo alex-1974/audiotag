@@ -17,6 +17,8 @@ Status: largely complete.
 
 Goal: prove the generic bounded range model before writing more tag parsers.
 
+Status: **complete** for the current parser-core requirements.
+
 ### 1.1 ByteSpan
 
 - bounded zero-copy byte view;
@@ -128,7 +130,9 @@ Semantic frame codecs are deliberately deferred to Phase 3.
 
 ## Phase 3 — Text and common ID3 frame codecs
 
-Implement robust text decoding:
+Status: **initial codec milestone complete**.
+
+Implemented robust text decoding:
 
 - ISO-8859-1;
 - UTF-8;
@@ -137,7 +141,7 @@ Implement robust text decoding:
 - aligned terminators;
 - malformed text diagnostics.
 
-Initial frame families:
+Implemented initial frame families:
 
 ```text
 T***
@@ -150,6 +154,8 @@ APIC
 PRIV
 UFID
 ```
+
+The codecs preserve native/raw provenance where required. Structurally valid compressed or encrypted payloads that require unsupported transformations are represented as transformation-pending outcomes rather than malformed input.
 
 ## Phase 4 — Canonical metadata tree
 
