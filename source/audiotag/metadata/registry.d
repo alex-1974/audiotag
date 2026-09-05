@@ -260,6 +260,12 @@ private immutable MetadataFieldDefinition[] definitions =
         MetadataKey("userUrl"),
         MetadataValueKind.url,
         MetadataMultiplicity.repeated
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("userText"),
+        MetadataValueKind.text,
+        MetadataMultiplicity.repeated
     )
 ];
 
@@ -499,6 +505,28 @@ unittest
 }
 
 
+/// User-defined text is explicitly repeatable scalar text.
+unittest
+{
+    auto definition =
+        findMetadataFieldDefinition(
+            MetadataKey("userText")
+        );
+
+    assert(definition.found);
+
+    assert(
+        definition.definition.valueKind ==
+        MetadataValueKind.text
+    );
+
+    assert(
+        definition.definition.multiplicity ==
+        MetadataMultiplicity.repeated
+    );
+}
+
+
 /// Unknown canonical keys remain explicitly unregistered.
 unittest
 {
@@ -517,7 +545,7 @@ unittest
     const registry =
         metadataFieldDefinitions();
 
-    assert(registry.length == 15);
+    assert(registry.length == 16);
 
     assert(registry[0].key.name == "title");
     assert(registry[1].key.name == "artist");
@@ -534,4 +562,5 @@ unittest
     assert(registry[12].key.name == "paymentUrl");
     assert(registry[13].key.name == "publisherUrl");
     assert(registry[14].key.name == "userUrl");
+    assert(registry[15].key.name == "userText");
 }
