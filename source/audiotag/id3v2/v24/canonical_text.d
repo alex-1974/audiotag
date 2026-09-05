@@ -20,6 +20,10 @@ module audiotag.id3v2.v24.canonical_text;
 import std.sumtype :
     match;
 
+import audiotag.id3v2.v24.canonical_mapping :
+    Id3v24CanonicalMappingResult,
+    Id3v24CanonicalMappingStatus;
+
 import audiotag.id3v2.v24.native_frame :
     Id3v24NativeFrame;
 
@@ -51,102 +55,19 @@ import audiotag.metadata.value :
 
 
 /++
-Outcome of mapping one decoded ID3v2.4 text-information frame.
+Backward-compatible text-mapper name for the common ID3v2.4 canonical
+mapping status.
 +/
-enum Id3v24CanonicalTextMappingStatus : ubyte
-{
-    /// A canonical field was produced.
-    mapped,
-
-    /// This native frame identifier/content has no mapping in this module.
-    unsupportedFrame,
-
-    /// Semantic content exists but requires a transformation that is not
-    /// currently available.
-    requiresTransformation,
-
-    /// The native value is valid but the current canonical field shape
-    /// cannot represent it without loss.
-    unrepresentableValueShape
-}
+alias Id3v24CanonicalTextMappingStatus =
+    Id3v24CanonicalMappingStatus;
 
 
 /++
-Result of mapping one decoded ID3v2.4 text-information frame.
+Backward-compatible text-mapper name for the common ID3v2.4 canonical
+mapping result.
 +/
-struct Id3v24CanonicalTextMappingResult
-{
-    /// Mapping outcome.
-    Id3v24CanonicalTextMappingStatus status;
-
-    /// Canonical field when `status == mapped`.
-    MetadataField field;
-
-    /++
-    Returns whether a canonical field was produced.
-    +/
-    @property
-    bool mapped() const
-        @safe pure nothrow @nogc
-    {
-        return status ==
-            Id3v24CanonicalTextMappingStatus.mapped;
-    }
-
-    /++
-    Constructs a successful mapping result.
-    +/
-    static Id3v24CanonicalTextMappingResult success(
-        MetadataField field
-    )
-        @safe
-    {
-        return Id3v24CanonicalTextMappingResult(
-            Id3v24CanonicalTextMappingStatus.mapped,
-            field
-        );
-    }
-
-    /++
-    Constructs a result for an unsupported native frame identifier.
-    +/
-    static Id3v24CanonicalTextMappingResult unsupported()
-        @safe pure nothrow @nogc
-    {
-        return Id3v24CanonicalTextMappingResult(
-            Id3v24CanonicalTextMappingStatus.unsupportedFrame,
-            MetadataField.init
-        );
-    }
-
-    /++
-    Constructs a result for semantic content that requires a currently
-    unavailable transformation.
-    +/
-    static Id3v24CanonicalTextMappingResult
-    transformationRequired()
-        @safe pure nothrow @nogc
-    {
-        return Id3v24CanonicalTextMappingResult(
-            Id3v24CanonicalTextMappingStatus.requiresTransformation,
-            MetadataField.init
-        );
-    }
-
-    /++
-    Constructs a result for a valid native value whose shape cannot
-    yet be represented losslessly by the canonical registry.
-    +/
-    static Id3v24CanonicalTextMappingResult
-    unrepresentable()
-        @safe pure nothrow @nogc
-    {
-        return Id3v24CanonicalTextMappingResult(
-            Id3v24CanonicalTextMappingStatus.unrepresentableValueShape,
-            MetadataField.init
-        );
-    }
-}
+alias Id3v24CanonicalTextMappingResult =
+    Id3v24CanonicalMappingResult;
 
 
 /++
