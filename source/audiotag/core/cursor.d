@@ -249,6 +249,106 @@ struct ByteCursor
 
         return ParseStatus.success();
     }
+
+
+    /++
+    Consumes bytes through the first occurrence of `pattern`.
+
+    The returned span contains the bytes before the matched pattern.
+    The pattern itself is consumed but is not included in the returned
+    span.
+
+    Searching is limited to at most `maxSearch` bytes beginning at the
+    current cursor position. A pattern whose final byte lies exactly at
+    the search boundary is considered a valid match.
+
+    Params:
+        pattern = Non-empty byte sequence to search for.
+        maxSearch = Maximum number of bytes in which the complete
+            pattern may occur.
+
+    Returns:
+        A successful result containing the bytes before the first
+        matching pattern, `ParseErrorCode.patternNotFound` when no
+        complete match exists inside the search region, or
+        `ParseErrorCode.invalidLength` when `pattern` is empty.
+
+    Error semantics:
+        Failure leaves the cursor unchanged.
+
+    Complexity:
+        O(n * m), where `n` is the bounded search length and `m` is the
+        pattern length.
+    +/
+    ParseResult!ByteSpan takeUntilPattern(
+        const(ubyte)[] pattern,
+        size_t maxSearch
+    )
+        @safe pure nothrow @nogc
+    {
+        if (pattern.length == 0)
+        {
+            return ParseResult!ByteSpan.failure(
+                ParseError(
+                    ParseErrorCode.invalidLength,
+                    absoluteOffset,
+                    0,
+                    remaining
+                )
+            );
+        }
+
+        const searchLength =
+            maxSearch < remaining
+                ? maxSearch
+                : remaining;
+
+        if (pattern.length <= searchLength)
+        {
+            const lastStart = searchLength - pattern.length;
+
+            for (size_t relativeOffset = 0;
+                 relativeOffset <= lastStart;
+                 ++relativeOffset)
+            {
+                bool matches = true;
+
+                for (size_t patternOffset = 0;
+                     patternOffset < pattern.length;
+                     ++patternOffset)
+                {
+                    if (_span.data[
+                            _position +
+                            relativeOffset +
+                            patternOffset
+                        ] != pattern[patternOffset])
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (matches)
+                {
+                    const result =
+                        _span.subspan(_position, relativeOffset);
+
+                    _position += relativeOffset + pattern.length;
+
+                    return ParseResult!ByteSpan.success(result);
+                }
+            }
+        }
+
+        return ParseResult!ByteSpan.failure(
+            ParseError(
+                ParseErrorCode.patternNotFound,
+                absoluteOffset,
+                pattern.length,
+                searchLength
+            )
+        );
+    }
 }
 
 
@@ -630,6 +730,206 @@ unittest
     assert(one.error.offset == 42);
     assert(one.error.requested == 1);
     assert(one.error.available == 0);
+
+    assert(cursor.position == 0);
+    assert(cursor.absoluteOffset == 42);
+}
+
+
+/// takeUntilPattern matches a pattern at the current position.
+unittest
+{
+    const ubyte[] bytes = [0x00, 0x10, 0x20];
+    const ubyte[] pattern = [0x00];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.takeUntilPattern(pattern, 3);
+
+    assert(result.hasValue);
+    assert(result.value.empty);
+    assert(result.value.sourceOffset == 100);
+
+    assert(cursor.position == 1);
+    assert(cursor.absoluteOffset == 101);
+    assert(cursor.remaining == 2);
+}
+
+
+/// takeUntilPattern returns data before a middle match and consumes it.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+    const ubyte[] pattern = [0x20, 0x30];
+    const ubyte[] expected = [0x10];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.takeUntilPattern(pattern, 4);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+    assert(result.value.sourceOffset == 100);
+
+    assert(cursor.position == 3);
+    assert(cursor.absoluteOffset == 103);
+    assert(cursor.remaining == 1);
+    assert(cursor.front == 0x40);
+}
+
+
+/// takeUntilPattern accepts a match ending exactly at the search boundary.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+    const ubyte[] pattern = [0x30, 0x40];
+    const ubyte[] expected = [0x10, 0x20];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 50));
+    auto result = cursor.takeUntilPattern(pattern, 4);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+    assert(result.value.sourceOffset == 50);
+
+    assert(cursor.position == 4);
+    assert(cursor.absoluteOffset == 54);
+    assert(cursor.empty);
+}
+
+
+/// takeUntilPattern chooses the first of multiple matches.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x00, 0x20, 0x00];
+    const ubyte[] pattern = [0x00];
+    const ubyte[] expected = [0x10];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.takeUntilPattern(pattern, 4);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+
+    assert(cursor.position == 2);
+    assert(cursor.front == 0x20);
+}
+
+
+/// takeUntilPattern correctly examines overlapping candidate positions.
+unittest
+{
+    const ubyte[] bytes = [0x01, 0x01, 0x02];
+    const ubyte[] pattern = [0x01, 0x02];
+    const ubyte[] expected = [0x01];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.takeUntilPattern(pattern, 3);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+
+    assert(cursor.position == 3);
+    assert(cursor.empty);
+}
+
+
+/// A missing pattern reports the bounded search and preserves state.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const originalPosition = cursor.position;
+    auto result = cursor.takeUntilPattern([0x99], 2);
+
+    assert(result.hasError);
+
+    const error = result.error;
+
+    assert(error.code == ParseErrorCode.patternNotFound);
+    assert(error.offset == 101);
+    assert(error.requested == 1);
+    assert(error.available == 2);
+
+    assert(cursor.position == originalPosition);
+    assert(cursor.absoluteOffset == 101);
+    assert(cursor.remaining == 2);
+}
+
+
+/// A pattern longer than the available input cannot match.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20];
+    const ubyte[] pattern = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.takeUntilPattern(pattern, 10);
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.patternNotFound);
+    assert(result.error.requested == 3);
+    assert(result.error.available == 2);
+
+    assert(cursor.position == 0);
+}
+
+
+/// maxSearch prevents a match beyond the permitted search region.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+    const ubyte[] pattern = [0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.takeUntilPattern(pattern, 2);
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.patternNotFound);
+    assert(result.error.requested == 1);
+    assert(result.error.available == 2);
+
+    assert(cursor.position == 0);
+    assert(cursor.absoluteOffset == 100);
+}
+
+
+/// An empty pattern is invalid and never changes cursor state.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+    const ubyte[] pattern = [];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const originalPosition = cursor.position;
+    auto result = cursor.takeUntilPattern(pattern, 2);
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.invalidLength);
+    assert(result.error.offset == 101);
+    assert(result.error.requested == 0);
+    assert(result.error.available == 2);
+
+    assert(cursor.position == originalPosition);
+    assert(cursor.absoluteOffset == 101);
+}
+
+
+/// A zero-byte search cannot find a non-empty pattern.
+unittest
+{
+    const ubyte[] bytes = [0x00];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 42));
+    auto result = cursor.takeUntilPattern([0x00], 0);
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.patternNotFound);
+    assert(result.error.requested == 1);
+    assert(result.error.available == 0);
 
     assert(cursor.position == 0);
     assert(cursor.absoluteOffset == 42);
