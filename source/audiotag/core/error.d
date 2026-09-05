@@ -22,6 +22,15 @@ enum ParseErrorCode : ubyte
     /// A required byte pattern was not found within the allowed region.
     patternNotFound,
 
+    /// A required structural signature or magic value is invalid.
+    invalidSignature,
+
+    /// The encountered format version is not supported by this parser.
+    unsupportedVersion,
+
+    /// Reserved or otherwise invalid structural flags are set.
+    invalidFlags,
+
     /// A length value is invalid for the surrounding structure.
     invalidLength,
 
