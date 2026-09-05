@@ -12,6 +12,8 @@ Fallible exact and partial byte operations are added separately.
 +/
 module audiotag.core.cursor;
 
+import audiotag.core.error : ParseError, ParseErrorCode;
+import audiotag.core.result : ParseResult;
 import audiotag.core.span : ByteSpan;
 
 
@@ -118,6 +120,68 @@ struct ByteCursor
 
         ++_position;
     }
+
+    /++
+    Returns exactly `count` bytes from the current cursor position
+    without consuming them.
+
+    Params:
+        count = Number of bytes required.
+
+    Returns:
+        A successful result containing exactly `count` bytes, or
+        `ParseErrorCode.endOfSpan` when fewer bytes remain.
+
+    Error semantics:
+        Failure leaves the cursor unchanged. The error offset is the
+        absolute current cursor position.
+    +/
+    ParseResult!ByteSpan peekBytes(size_t count) const
+        @safe pure nothrow @nogc
+    {
+        if (count > remaining)
+        {
+            return ParseResult!ByteSpan.failure(
+                ParseError(
+                    ParseErrorCode.endOfSpan,
+                    absoluteOffset,
+                    count,
+                    remaining
+                )
+            );
+        }
+
+        return ParseResult!ByteSpan.success(
+            _span.subspan(_position, count)
+        );
+    }
+
+    /++
+    Consumes and returns exactly `count` bytes.
+
+    Params:
+        count = Number of bytes required.
+
+    Returns:
+        A successful result containing exactly `count` bytes, or
+        `ParseErrorCode.endOfSpan` when fewer bytes remain.
+
+    Error semantics:
+        On success the cursor advances by exactly `count` bytes.
+        On failure the cursor position is unchanged.
+    +/
+    ParseResult!ByteSpan takeBytes(size_t count)
+        @safe pure nothrow @nogc
+    {
+        auto result = peekBytes(count);
+
+        if (result.hasError)
+            return result;
+
+        _position += count;
+
+        return result;
+    }
 }
 
 
@@ -184,5 +248,146 @@ unittest
     assert(cursor.position == 1);
     assert(cursor.absoluteOffset == 101);
     assert(cursor.remaining == 0);
+    assert(cursor.empty);
+}
+
+
+/// peekBytes returns an exact span without advancing the cursor.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+    const ubyte[] expected = [0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const originalPosition = cursor.position;
+    auto result = cursor.peekBytes(2);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+    assert(result.value.sourceOffset == 101);
+    assert(cursor.position == originalPosition);
+    assert(cursor.absoluteOffset == 101);
+}
+
+
+/// peekBytes accepts an exact-boundary request.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 50));
+    auto result = cursor.peekBytes(3);
+
+    assert(result.hasValue);
+    assert(result.value.length == 3);
+    assert(result.value.sourceOffset == 50);
+    assert(cursor.position == 0);
+}
+
+
+/// peekBytes failure reports bounds and preserves cursor state.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const originalPosition = cursor.position;
+    auto result = cursor.peekBytes(3);
+
+    assert(result.hasError);
+
+    const error = result.error;
+
+    assert(error.code == ParseErrorCode.endOfSpan);
+    assert(error.offset == 101);
+    assert(error.requested == 3);
+    assert(error.available == 2);
+    assert(cursor.position == originalPosition);
+}
+
+
+/// takeBytes returns an exact span and advances by exactly its length.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+    const ubyte[] expected = [0x10, 0x20];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 200));
+    auto result = cursor.takeBytes(2);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+    assert(result.value.sourceOffset == 200);
+    assert(cursor.position == 2);
+    assert(cursor.absoluteOffset == 202);
+    assert(cursor.remaining == 2);
+}
+
+
+/// takeBytes may consume exactly all remaining bytes.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result = cursor.takeBytes(3);
+
+    assert(result.hasValue);
+    assert(result.value.length == 3);
+    assert(cursor.position == 3);
+    assert(cursor.absoluteOffset == 103);
+    assert(cursor.remaining == 0);
+    assert(cursor.empty);
+}
+
+
+/// takeBytes failure is atomic and does not partially consume input.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    const originalPosition = cursor.position;
+    auto result = cursor.takeBytes(3);
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.endOfSpan);
+    assert(result.error.offset == 101);
+    assert(result.error.requested == 3);
+    assert(result.error.available == 2);
+
+    assert(cursor.position == originalPosition);
+    assert(cursor.absoluteOffset == 101);
+    assert(cursor.remaining == 2);
+}
+
+
+/// Zero-length exact operations succeed even at the end of a span.
+unittest
+{
+    const ubyte[] bytes = [0x10];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    auto peeked = cursor.peekBytes(0);
+
+    assert(peeked.hasValue);
+    assert(peeked.value.empty);
+    assert(peeked.value.sourceOffset == 101);
+    assert(cursor.position == 1);
+
+    auto taken = cursor.takeBytes(0);
+
+    assert(taken.hasValue);
+    assert(taken.value.empty);
+    assert(taken.value.sourceOffset == 101);
+    assert(cursor.position == 1);
     assert(cursor.empty);
 }
