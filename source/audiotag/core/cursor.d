@@ -349,6 +349,117 @@ struct ByteCursor
             )
         );
     }
+
+
+    /++
+    Consumes bytes through the first aligned occurrence of `pattern`.
+
+    Candidate matches are considered only at offsets that are multiples
+    of `alignment` relative to the current cursor position.
+
+    The returned span contains the bytes before the matched pattern.
+    The pattern itself is consumed but is not included in the returned
+    span.
+
+    Searching is limited to at most `maxSearch` bytes beginning at the
+    current cursor position. A pattern whose final byte lies exactly at
+    the search boundary is considered a valid match.
+
+    Params:
+        pattern = Non-empty byte sequence to search for.
+        maxSearch = Maximum number of bytes in which the complete
+            pattern may occur.
+        alignment = Required alignment of candidate match offsets
+            relative to the current cursor position.
+
+    Returns:
+        A successful result containing the bytes before the first
+        aligned match, `ParseErrorCode.patternNotFound` when no aligned
+        complete match exists inside the search region, or
+        `ParseErrorCode.invalidLength` when `pattern` is empty.
+
+    Preconditions:
+        `alignment` must be greater than zero.
+
+    Error semantics:
+        Failure leaves the cursor unchanged.
+
+    Complexity:
+        O((n / alignment) * m), where `n` is the bounded search length
+        and `m` is the pattern length.
+    +/
+    ParseResult!ByteSpan takeUntilPatternAligned(
+        const(ubyte)[] pattern,
+        size_t maxSearch,
+        size_t alignment
+    )
+        @safe pure nothrow @nogc
+    {
+        assert(alignment > 0);
+
+        if (pattern.length == 0)
+        {
+            return ParseResult!ByteSpan.failure(
+                ParseError(
+                    ParseErrorCode.invalidLength,
+                    absoluteOffset,
+                    0,
+                    remaining
+                )
+            );
+        }
+
+        const searchLength =
+            maxSearch < remaining
+                ? maxSearch
+                : remaining;
+
+        if (pattern.length <= searchLength)
+        {
+            const lastStart = searchLength - pattern.length;
+
+            for (size_t relativeOffset = 0;
+                 relativeOffset <= lastStart;
+                 relativeOffset += alignment)
+            {
+                bool matches = true;
+
+                for (size_t patternOffset = 0;
+                     patternOffset < pattern.length;
+                     ++patternOffset)
+                {
+                    if (_span.data[
+                            _position +
+                            relativeOffset +
+                            patternOffset
+                        ] != pattern[patternOffset])
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (matches)
+                {
+                    const result =
+                        _span.subspan(_position, relativeOffset);
+
+                    _position += relativeOffset + pattern.length;
+
+                    return ParseResult!ByteSpan.success(result);
+                }
+            }
+        }
+
+        return ParseResult!ByteSpan.failure(
+            ParseError(
+                ParseErrorCode.patternNotFound,
+                absoluteOffset,
+                pattern.length,
+                searchLength
+            )
+        );
+    }
 }
 
 
@@ -933,4 +1044,198 @@ unittest
 
     assert(cursor.position == 0);
     assert(cursor.absoluteOffset == 42);
+}
+
+
+/// Aligned pattern search accepts a match at offset zero.
+unittest
+{
+    const ubyte[] bytes = [0x00, 0x00, 0x41, 0x00];
+    const ubyte[] pattern = [0x00, 0x00];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 4, 2);
+
+    assert(result.hasValue);
+    assert(result.value.empty);
+    assert(result.value.sourceOffset == 100);
+
+    assert(cursor.position == 2);
+    assert(cursor.absoluteOffset == 102);
+}
+
+
+/// Aligned pattern search accepts a match on a valid code-unit boundary.
+unittest
+{
+    const ubyte[] bytes =
+        [0x41, 0x00, 0x42, 0x00, 0x00, 0x00, 0x43, 0x00];
+
+    const ubyte[] pattern = [0x00, 0x00];
+    const ubyte[] expected = [0x41, 0x00, 0x42, 0x00];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 200));
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 8, 2);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+    assert(result.value.sourceOffset == 200);
+
+    assert(cursor.position == 6);
+    assert(cursor.absoluteOffset == 206);
+    assert(cursor.remaining == 2);
+}
+
+
+/// Aligned search ignores an identical byte pattern at an invalid offset.
+unittest
+{
+    const ubyte[] bytes =
+        [0x41, 0x00, 0x00, 0x42, 0x00, 0x00, 0x43];
+
+    const ubyte[] pattern = [0x00, 0x00];
+    const ubyte[] expected =
+        [0x41, 0x00, 0x00, 0x42];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 7, 2);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+
+    // The candidate at relative offset 1 is ignored.
+    // The valid aligned match begins at relative offset 4.
+    assert(cursor.position == 6);
+    assert(cursor.front == 0x43);
+}
+
+
+/// Alignment is relative to the cursor start, not the absolute file offset.
+unittest
+{
+    const ubyte[] bytes =
+        [0x99, 0x41, 0x00, 0x00, 0x42];
+
+    const ubyte[] pattern = [0x00, 0x00];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    cursor.popFront();
+
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 4, 2);
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.patternNotFound);
+
+    // Relative offset 1 contains the pattern but is not aligned
+    // relative to the cursor position at absolute offset 101.
+    assert(cursor.position == 1);
+    assert(cursor.absoluteOffset == 101);
+}
+
+
+/// Alignment 1 has the same matching behavior as unaligned search.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20, 0x30, 0x40];
+    const ubyte[] pattern = [0x20, 0x30];
+    const ubyte[] expected = [0x10];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 50));
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 4, 1);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+    assert(cursor.position == 3);
+}
+
+
+/// Alignment 4 examines only offsets divisible by four.
+unittest
+{
+    const ubyte[] bytes =
+        [0x10, 0x99, 0x20, 0x99,
+         0x30, 0x40, 0x50, 0x60];
+
+    const ubyte[] pattern = [0x30, 0x40];
+    const ubyte[] expected = [0x10, 0x99, 0x20, 0x99];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 8, 4);
+
+    assert(result.hasValue);
+    assert(result.value.data == expected);
+    assert(cursor.position == 6);
+}
+
+
+/// Aligned search accepts a match ending exactly at maxSearch.
+unittest
+{
+    const ubyte[] bytes =
+        [0x10, 0x20, 0x30, 0x40];
+
+    const ubyte[] pattern = [0x30, 0x40];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 4, 2);
+
+    assert(result.hasValue);
+    assert(result.value.length == 2);
+    assert(cursor.position == 4);
+    assert(cursor.empty);
+}
+
+
+/// Aligned search failure preserves the complete cursor state.
+unittest
+{
+    const ubyte[] bytes =
+        [0x10, 0x00, 0x00, 0x20];
+
+    const ubyte[] pattern = [0x00, 0x00];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 100));
+
+    const originalPosition = cursor.position;
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 4, 2);
+
+    assert(result.hasError);
+
+    const error = result.error;
+
+    assert(error.code == ParseErrorCode.patternNotFound);
+    assert(error.offset == 100);
+    assert(error.requested == 2);
+    assert(error.available == 4);
+
+    assert(cursor.position == originalPosition);
+    assert(cursor.absoluteOffset == 100);
+    assert(cursor.remaining == 4);
+}
+
+
+/// Empty patterns remain invalid for aligned searches.
+unittest
+{
+    const ubyte[] bytes = [0x10, 0x20];
+    const ubyte[] pattern = [];
+
+    auto cursor = ByteCursor(ByteSpan(bytes, 42));
+
+    auto result =
+        cursor.takeUntilPatternAligned(pattern, 2, 2);
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.invalidLength);
+    assert(result.error.offset == 42);
+
+    assert(cursor.position == 0);
 }
