@@ -20,8 +20,16 @@ module audiotag.id3v2.v24.canonical_text;
 import std.sumtype :
     match;
 
+import audiotag.id3v2.v24.native_frame :
+    Id3v24NativeFrame;
+
+import audiotag.id3v2.v24.native_state :
+    Id3v24NativeFrameState,
+    id3v24NativeFrameState;
+
 import audiotag.id3v2.v24.text_information :
-    Id3v24TextInformationFrame;
+    Id3v24TextInformationFrame,
+    Id3v24TextInformationOutcome;
 
 import audiotag.metadata.field :
     MetadataField,
@@ -50,8 +58,12 @@ enum Id3v24CanonicalTextMappingStatus : ubyte
     /// A canonical field was produced.
     mapped,
 
-    /// This native frame identifier has no mapping in this module.
+    /// This native frame identifier/content has no mapping in this module.
     unsupportedFrame,
+
+    /// Semantic content exists but requires a transformation that is not
+    /// currently available.
+    requiresTransformation,
 
     /// The native value is valid but the current canonical field shape
     /// cannot represent it without loss.
@@ -108,6 +120,20 @@ struct Id3v24CanonicalTextMappingResult
     }
 
     /++
+    Constructs a result for semantic content that requires a currently
+    unavailable transformation.
+    +/
+    static Id3v24CanonicalTextMappingResult
+    transformationRequired()
+        @safe pure nothrow @nogc
+    {
+        return Id3v24CanonicalTextMappingResult(
+            Id3v24CanonicalTextMappingStatus.requiresTransformation,
+            MetadataField.init
+        );
+    }
+
+    /++
     Constructs a result for a valid native value whose shape cannot
     yet be represented losslessly by the canonical registry.
     +/
@@ -136,7 +162,8 @@ Returns:
 +/
 Id3v24CanonicalTextMappingResult
 mapId3v24TextInformationFrameToCanonical(
-    Id3v24TextInformationFrame frame
+    Id3v24TextInformationFrame frame,
+    size_t sourceLength = 0
 )
     @safe
 {
@@ -150,7 +177,8 @@ mapId3v24TextInformationFrameToCanonical(
                 "title",
                 "TIT2",
                 frame.values[0],
-                frame.sourceOffset
+                frame.sourceOffset,
+                sourceLength
             )
         );
     }
@@ -168,7 +196,8 @@ mapId3v24TextInformationFrameToCanonical(
                 [
                     makeProvenance(
                         "TPE1",
-                        frame.sourceOffset
+                        frame.sourceOffset,
+                        sourceLength
                     )
                 ]
             );
@@ -190,12 +219,70 @@ mapId3v24TextInformationFrameToCanonical(
                 "album",
                 "TALB",
                 frame.values[0],
-                frame.sourceOffset
+                frame.sourceOffset,
+                sourceLength
             )
         );
     }
 
     return Id3v24CanonicalTextMappingResult.unsupported();
+}
+
+
+/++
+Maps one unified native ID3v2.4 frame through the basic canonical
+text mapper.
+
+Only decoded ordinary text-information outcomes are mapped here.
+Unknown frames, non-text native outcomes and transformation-pending
+content remain successful native data but produce no canonical text
+field.
+
+Unlike the lower-level decoded-frame overload, this function has the
+complete structural envelope and therefore records the exact physical
+frame length in canonical provenance.
+
+Params:
+    native = Unified native ID3v2.4 frame.
+
+Returns:
+    Canonical text mapping result.
++/
+Id3v24CanonicalTextMappingResult
+mapId3v24NativeTextFrameToCanonical(
+    Id3v24NativeFrame native
+)
+    @safe
+{
+    const state =
+        id3v24NativeFrameState(native);
+
+    if (
+        state ==
+        Id3v24NativeFrameState.unknownSemanticFrame
+    )
+    {
+        return
+            Id3v24CanonicalTextMappingResult.unsupported();
+    }
+
+    if (state != Id3v24NativeFrameState.decoded)
+    {
+        return
+            Id3v24CanonicalTextMappingResult
+                .transformationRequired();
+    }
+
+    return native.content.match!(
+        (Id3v24TextInformationOutcome outcome) =>
+            mapId3v24TextInformationFrameToCanonical(
+                outcome.text,
+                native.sourceLength
+            ),
+
+        _ =>
+            Id3v24CanonicalTextMappingResult.unsupported()
+    );
 }
 
 
@@ -227,7 +314,8 @@ the exact origin position without inventing a byte range.
 +/
 private MetadataProvenance makeProvenance(
     string nativeIdentifier,
-    size_t sourceOffset
+    size_t sourceOffset,
+    size_t sourceLength
 )
     @safe pure nothrow @nogc
 {
@@ -237,7 +325,7 @@ private MetadataProvenance makeProvenance(
             nativeIdentifier
         ),
         sourceOffset,
-        0,
+        sourceLength,
         MetadataConfidence.exact
     );
 }
@@ -250,7 +338,8 @@ private MetadataField makeScalarTextField(
     string canonicalKey,
     string nativeIdentifier,
     string value,
-    size_t sourceOffset
+    size_t sourceOffset,
+    size_t sourceLength
 )
     @safe
 {
@@ -263,7 +352,8 @@ private MetadataField makeScalarTextField(
             [
                 makeProvenance(
                     nativeIdentifier,
-                    sourceOffset
+                    sourceOffset,
+                    sourceLength
                 )
             ]
         );
@@ -445,6 +535,184 @@ unittest
         result.status ==
         Id3v24CanonicalTextMappingStatus
             .unrepresentableValueShape
+    );
+}
+
+
+/// Native-frame mapping records the complete physical frame extent.
+unittest
+{
+    import audiotag.core.cursor :
+        ByteCursor;
+
+    import audiotag.core.span :
+        ByteSpan;
+
+    import audiotag.id3v2.v24.frame :
+        parseId3v24FrameEnvelope;
+
+    import audiotag.id3v2.v24.native_frame :
+        decodeId3v24NativeFrame;
+
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x06,
+            0x00, 0x00,
+
+            0x03,
+            'T', 'i', 't', 'l', 'e'
+        ];
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                bytes,
+                700
+            )
+        );
+
+    auto envelope =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(envelope.hasValue);
+
+    auto native =
+        decodeId3v24NativeFrame(
+            envelope.value
+        );
+
+    assert(native.hasValue);
+
+    auto mapped =
+        mapId3v24NativeTextFrameToCanonical(
+            native.value
+        );
+
+    assert(mapped.mapped);
+    assert(mapped.field.provenance.length == 1);
+
+    assert(
+        mapped.field.provenance[0].sourceOffset ==
+        700
+    );
+
+    assert(
+        mapped.field.provenance[0].sourceLength ==
+        bytes.length
+    );
+}
+
+
+/// Transformation-pending native text is not treated as malformed.
+unittest
+{
+    import audiotag.core.cursor :
+        ByteCursor;
+
+    import audiotag.core.span :
+        ByteSpan;
+
+    import audiotag.id3v2.v24.frame :
+        parseId3v24FrameEnvelope;
+
+    import audiotag.id3v2.v24.native_frame :
+        decodeId3v24NativeFrame;
+
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x09,
+
+            0x00, 0x00, 0x00, 0x01,
+            0xAA
+        ];
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(bytes)
+        );
+
+    auto envelope =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(envelope.hasValue);
+
+    auto native =
+        decodeId3v24NativeFrame(
+            envelope.value
+        );
+
+    assert(native.hasValue);
+
+    auto mapped =
+        mapId3v24NativeTextFrameToCanonical(
+            native.value
+        );
+
+    assert(!mapped.mapped);
+
+    assert(
+        mapped.status ==
+        Id3v24CanonicalTextMappingStatus
+            .requiresTransformation
+    );
+}
+
+
+/// Unknown native frames remain unsupported rather than erroneous.
+unittest
+{
+    import audiotag.core.cursor :
+        ByteCursor;
+
+    import audiotag.core.span :
+        ByteSpan;
+
+    import audiotag.id3v2.v24.frame :
+        parseId3v24FrameEnvelope;
+
+    import audiotag.id3v2.v24.native_frame :
+        decodeId3v24NativeFrame;
+
+    const ubyte[] bytes =
+        [
+            'G', 'E', 'O', 'B',
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00,
+
+            0x55
+        ];
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(bytes)
+        );
+
+    auto envelope =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(envelope.hasValue);
+
+    auto native =
+        decodeId3v24NativeFrame(
+            envelope.value
+        );
+
+    assert(native.hasValue);
+
+    auto mapped =
+        mapId3v24NativeTextFrameToCanonical(
+            native.value
+        );
+
+    assert(!mapped.mapped);
+
+    assert(
+        mapped.status ==
+        Id3v24CanonicalTextMappingStatus
+            .unsupportedFrame
     );
 }
 
