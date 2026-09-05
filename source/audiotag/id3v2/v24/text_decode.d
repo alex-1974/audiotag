@@ -27,6 +27,9 @@ import audiotag.core.error :
 import audiotag.core.result :
     ParseResult;
 
+import audiotag.core.span :
+    ByteSpan;
+
 import audiotag.id3v2.v24.data_cursor :
     Id3v24DataCursor;
 
@@ -38,12 +41,16 @@ import audiotag.id3v2.v24.text_segment :
 
 
 /++
-Decodes one ID3v2.4 encoded text segment to UTF-8.
+Decodes one bounded ID3v2.4 text region to UTF-8.
+
+The region does not need to contain or end in a string terminator.
+This is useful for text values whose extent is already defined by the
+enclosing frame.
 
 Params:
-    segment = Previously bounded encoded text segment.
-    unsynchronised = Whether unsynchronisation applies to the physical
-        bytes stored in `segment.raw`.
+    raw = Physical encoded text bytes.
+    encoding = ID3v2.4 text encoding.
+    unsynchronised = Whether unsynchronisation applies to `raw`.
 
 Returns:
     A UTF-8 D string or a structured text-decoding error.
@@ -51,36 +58,37 @@ Returns:
 Notes:
     This semantic decoding layer may allocate.
 +/
-ParseResult!string decodeId3v24TextSegment(
-    Id3v24TextSegment segment,
+ParseResult!string decodeId3v24TextSpan(
+    ByteSpan raw,
+    Id3v24TextEncoding encoding,
     bool unsynchronised = false
 )
     @safe
 {
-    switch (segment.encoding)
+    switch (encoding)
     {
         case Id3v24TextEncoding.latin1:
             return decodeLatin1(
-                segment,
+                raw,
                 unsynchronised
             );
 
         case Id3v24TextEncoding.utf8:
             return decodeUtf8(
-                segment,
+                raw,
                 unsynchronised
             );
 
         case Id3v24TextEncoding.utf16:
             return decodeUtf16(
-                segment,
+                raw,
                 unsynchronised,
                 true
             );
 
         case Id3v24TextEncoding.utf16be:
             return decodeUtf16(
-                segment,
+                raw,
                 unsynchronised,
                 false
             );
@@ -89,7 +97,7 @@ ParseResult!string decodeId3v24TextSegment(
             return ParseResult!string.failure(
                 ParseError(
                     ParseErrorCode.invalidEncodingMarker,
-                    segment.raw.sourceOffset
+                    raw.sourceOffset
                 )
             );
     }
@@ -97,16 +105,36 @@ ParseResult!string decodeId3v24TextSegment(
 
 
 /++
+Decodes one previously bounded text segment to UTF-8.
+
+This is a convenience wrapper around `decodeId3v24TextSpan`.
++/
+ParseResult!string decodeId3v24TextSegment(
+    Id3v24TextSegment segment,
+    bool unsynchronised = false
+)
+    @safe
+{
+    return decodeId3v24TextSpan(
+        segment.raw,
+        segment.encoding,
+        unsynchronised
+    );
+}
+
+
+/++
 Decodes ISO-8859-1 code units to UTF-8.
 +/
 private ParseResult!string decodeLatin1(
-    Id3v24TextSegment segment,
+    ByteSpan raw,
     bool unsynchronised
 )
     @safe
 {
     auto cursor =
-        segment.textCursor(
+        Id3v24DataCursor(
+            raw,
             unsynchronised
         );
 
@@ -135,13 +163,14 @@ private ParseResult!string decodeLatin1(
 Validates and returns UTF-8 logical bytes.
 +/
 private ParseResult!string decodeUtf8(
-    Id3v24TextSegment segment,
+    ByteSpan raw,
     bool unsynchronised
 )
     @safe
 {
     auto cursor =
-        segment.textCursor(
+        Id3v24DataCursor(
+            raw,
             unsynchronised
         );
 
@@ -192,14 +221,15 @@ When `requiresBom` is true, non-empty text must begin with either
 An empty `$01` string may omit its BOM.
 +/
 private ParseResult!string decodeUtf16(
-    Id3v24TextSegment segment,
+    ByteSpan raw,
     bool unsynchronised,
     bool requiresBom
 )
     @safe
 {
     auto cursor =
-        segment.textCursor(
+        Id3v24DataCursor(
+            raw,
             unsynchronised
         );
 
@@ -455,7 +485,6 @@ private ParseResult!Utf16Unit takeUtf16Unit(
 }
 
 
-import audiotag.core.span : ByteSpan;
 
 import audiotag.id3v2.v24.text_segment :
     takeId3v24TerminatedTextSegment;
@@ -895,4 +924,58 @@ unittest
 
     assert(decoded.hasValue);
     assert(decoded.value == "A");
+}
+
+
+/// A bounded Latin-1 value does not require a trailing terminator.
+unittest
+{
+    const ubyte[] bytes =
+        ['A', 0xE4];
+
+    auto result =
+        decodeId3v24TextSpan(
+            ByteSpan(bytes, 2000),
+            Id3v24TextEncoding.latin1
+        );
+
+    assert(result.hasValue);
+    assert(result.value == "A\u00E4");
+}
+
+
+/// A bounded UTF-8 value does not require a trailing terminator.
+unittest
+{
+    const ubyte[] bytes =
+        [0xC3, 0x84];
+
+    auto result =
+        decodeId3v24TextSpan(
+            ByteSpan(bytes, 2100),
+            Id3v24TextEncoding.utf8
+        );
+
+    assert(result.hasValue);
+    assert(result.value == "\u00C4");
+}
+
+
+/// A bounded UTF-16BE value is decoded to the end of its span.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            0x00, 0x41,
+            0x03, 0xA9
+        ];
+
+    auto result =
+        decodeId3v24TextSpan(
+            ByteSpan(bytes, 2200),
+            Id3v24TextEncoding.utf16be
+        );
+
+    assert(result.hasValue);
+    assert(result.value == "A\u03A9");
 }
