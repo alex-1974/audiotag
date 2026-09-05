@@ -41,7 +41,7 @@ The legacy code currently contains:
 - a compile-time ID3 frame registry generated from CSV;
 - proof-of-concept D ranges for frames.
 
-The new architecture has started with a bounded, zero-copy `ByteSpan` core type. The implementation is committed and its unit tests pass.
+The format-independent binary parsing core is now implemented. It includes bounded zero-copy `ByteSpan` views, stateful `ByteCursor` traversal, structured allocation-light parse errors and results, exact and partial byte consumption, bounded and aligned pattern search, endian integer readers, and validated synchsafe integer decoding.
 
 Known legacy issues are intentionally being left isolated rather than fixed opportunistically during the core rewrite.
 

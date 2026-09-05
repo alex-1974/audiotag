@@ -8,7 +8,9 @@ The cursor is always confined to its underlying span. Operations that
 consume bytes advance only the cursor position; the `ByteSpan` itself
 remains unchanged.
 
-Fallible exact and partial byte operations are added separately.
+Exact, partial and pattern-based operations preserve bounded
+traversal semantics and report malformed external input through
+structured parse errors.
 +/
 module audiotag.core.cursor;
 
