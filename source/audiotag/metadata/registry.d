@@ -206,6 +206,60 @@ private immutable MetadataFieldDefinition[] definitions =
         MetadataKey("artwork"),
         MetadataValueKind.picture,
         MetadataMultiplicity.repeated
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("commercialUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("copyrightUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("audioFileUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("artistUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("audioSourceUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("radioStationUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("paymentUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("publisherUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("userUrl"),
+        MetadataValueKind.url,
+        MetadataMultiplicity.repeated
     )
 ];
 
@@ -388,6 +442,63 @@ unittest
 }
 
 
+/// Standard URL fields are registered as URL-typed single values.
+unittest
+{
+    foreach (key;
+        [
+            "commercialUrl",
+            "copyrightUrl",
+            "audioFileUrl",
+            "artistUrl",
+            "audioSourceUrl",
+            "radioStationUrl",
+            "paymentUrl",
+            "publisherUrl"
+        ])
+    {
+        auto definition =
+            findMetadataFieldDefinition(
+                MetadataKey(key)
+            );
+
+        assert(definition.found);
+
+        assert(
+            definition.definition.valueKind ==
+            MetadataValueKind.url
+        );
+
+        assert(
+            definition.definition.multiplicity ==
+            MetadataMultiplicity.single
+        );
+    }
+}
+
+
+/// User-defined URLs retain explicit repeatability.
+unittest
+{
+    auto definition =
+        findMetadataFieldDefinition(
+            MetadataKey("userUrl")
+        );
+
+    assert(definition.found);
+
+    assert(
+        definition.definition.valueKind ==
+        MetadataValueKind.url
+    );
+
+    assert(
+        definition.definition.multiplicity ==
+        MetadataMultiplicity.repeated
+    );
+}
+
+
 /// Unknown canonical keys remain explicitly unregistered.
 unittest
 {
@@ -406,7 +517,7 @@ unittest
     const registry =
         metadataFieldDefinitions();
 
-    assert(registry.length == 6);
+    assert(registry.length == 15);
 
     assert(registry[0].key.name == "title");
     assert(registry[1].key.name == "artist");
@@ -414,4 +525,13 @@ unittest
     assert(registry[3].key.name == "comment");
     assert(registry[4].key.name == "lyrics");
     assert(registry[5].key.name == "artwork");
+    assert(registry[6].key.name == "commercialUrl");
+    assert(registry[7].key.name == "copyrightUrl");
+    assert(registry[8].key.name == "audioFileUrl");
+    assert(registry[9].key.name == "artistUrl");
+    assert(registry[10].key.name == "audioSourceUrl");
+    assert(registry[11].key.name == "radioStationUrl");
+    assert(registry[12].key.name == "paymentUrl");
+    assert(registry[13].key.name == "publisherUrl");
+    assert(registry[14].key.name == "userUrl");
 }
