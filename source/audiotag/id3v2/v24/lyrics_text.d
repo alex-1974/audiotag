@@ -28,24 +28,17 @@ import audiotag.core.result :
 import audiotag.core.span :
     ByteSpan;
 
-import audiotag.id3v2.v24.data_cursor :
-    Id3v24DataCursor;
-
 import audiotag.id3v2.v24.frame :
     Id3v24FrameEnvelope;
 
 import audiotag.id3v2.v24.frame_data :
     parseId3v24FrameDataLayout;
 
-import audiotag.id3v2.v24.text_decode :
-    decodeId3v24TextSpan;
+import audiotag.id3v2.v24.language_text_payload :
+    decodeId3v24LanguageTextPayload;
 
 import audiotag.id3v2.v24.text_encoding :
-    Id3v24TextEncoding,
-    parseId3v24TextEncoding;
-
-import audiotag.id3v2.v24.text_segment :
-    takeId3v24TerminatedTextSegment;
+    Id3v24TextEncoding;
 
 
 /++
@@ -218,114 +211,33 @@ decodeId3v24LyricsTextFrame(
         );
     }
 
-    auto payload =
-        layout.payloadCursor();
+    auto payloadResult =
+        decodeId3v24LanguageTextPayload(
+            layout.rawPayload,
+            layout.effectiveUnsynchronisation
+        );
 
-    auto encodingResult =
-        payload.parseId3v24TextEncoding();
-
-    if (encodingResult.hasError)
+    if (payloadResult.hasError)
     {
         return ParseResult!Id3v24LyricsTextOutcome.failure(
-            encodingResult.error
+            payloadResult.error
         );
     }
 
-    const encoding =
-        encodingResult.value;
-
-    const languageStart =
-        payload.remainingRaw;
-
-    char[3] language;
-
-    foreach (i; 0 .. 3)
-    {
-        auto byteResult =
-            payload.takeByte();
-
-        if (byteResult.hasError)
-        {
-            return ParseResult!Id3v24LyricsTextOutcome.failure(
-                byteResult.error
-            );
-        }
-
-        language[i] =
-            cast(char) byteResult.value.value;
-    }
-
-    const languagePhysicalLength =
-        languageStart.length -
-        payload.remainingRaw.length;
-
-    const rawLanguage =
-        languageStart.subspan(
-            0,
-            languagePhysicalLength
-        );
-
-    auto descriptorResult =
-        payload.takeId3v24TerminatedTextSegment(
-            encoding
-        );
-
-    if (descriptorResult.hasError)
-    {
-        return ParseResult!Id3v24LyricsTextOutcome.failure(
-            descriptorResult.error
-        );
-    }
-
-    const descriptorSegment =
-        descriptorResult.value;
-
-    const rawText =
-        payload.remainingRaw;
-
-    ubyte utf16ByteOrder;
-
-    auto descriptor =
-        decodeLyricsTextPart(
-            descriptorSegment.raw,
-            encoding,
-            layout.effectiveUnsynchronisation,
-            utf16ByteOrder
-        );
-
-    if (descriptor.hasError)
-    {
-        return ParseResult!Id3v24LyricsTextOutcome.failure(
-            descriptor.error
-        );
-    }
-
-    auto lyricsText =
-        decodeLyricsTextPart(
-            rawText,
-            encoding,
-            layout.effectiveUnsynchronisation,
-            utf16ByteOrder
-        );
-
-    if (lyricsText.hasError)
-    {
-        return ParseResult!Id3v24LyricsTextOutcome.failure(
-            lyricsText.error
-        );
-    }
+    const payload =
+        payloadResult.value;
 
     auto lyrics =
         Id3v24LyricsTextFrame(
             frame.header.sourceOffset,
-            encoding,
-            language,
-            rawLanguage,
-            descriptor.value,
-            lyricsText.value,
-            descriptorSegment.raw,
-            rawText,
-            layout.effectiveUnsynchronisation
+            payload.encoding,
+            payload.language,
+            payload.rawLanguage,
+            payload.descriptor,
+            payload.text,
+            payload.rawDescriptor,
+            payload.rawText,
+            payload.effectiveUnsynchronisation
         );
 
     return ParseResult!Id3v24LyricsTextOutcome.success(
@@ -338,94 +250,6 @@ decodeId3v24LyricsTextFrame(
 }
 
 
-/++
-Decodes one USLT text part and enforces consistent UTF-16 byte order
-across descriptor and lyrics/text.
-+/
-private ParseResult!string decodeLyricsTextPart(
-    ByteSpan raw,
-    Id3v24TextEncoding encoding,
-    bool unsynchronised,
-    ref ubyte utf16ByteOrder
-)
-    @safe
-{
-    auto decoded =
-        decodeId3v24TextSpan(
-            raw,
-            encoding,
-            unsynchronised
-        );
-
-    if (decoded.hasError)
-        return decoded;
-
-    if (
-        encoding != Id3v24TextEncoding.utf16 ||
-        raw.empty
-    )
-    {
-        return decoded;
-    }
-
-    auto cursor =
-        Id3v24DataCursor(
-            raw,
-            unsynchronised
-        );
-
-    auto firstResult =
-        cursor.takeByte();
-
-    assert(firstResult.hasValue);
-
-    auto secondResult =
-        cursor.takeByte();
-
-    assert(secondResult.hasValue);
-
-    const first =
-        firstResult.value;
-
-    const second =
-        secondResult.value;
-
-    ubyte byteOrder;
-
-    if (
-        first.value == 0xFE &&
-        second.value == 0xFF
-    )
-    {
-        byteOrder = 1;
-    }
-    else
-    {
-        // decodeId3v24TextSpan() already validated the BOM.
-        assert(
-            first.value == 0xFF &&
-            second.value == 0xFE
-        );
-
-        byteOrder = 2;
-    }
-
-    if (utf16ByteOrder == 0)
-    {
-        utf16ByteOrder = byteOrder;
-    }
-    else if (utf16ByteOrder != byteOrder)
-    {
-        return ParseResult!string.failure(
-            ParseError(
-                ParseErrorCode.inconsistentStructure,
-                first.sourceOffset
-            )
-        );
-    }
-
-    return decoded;
-}
 
 
 import audiotag.core.cursor :
