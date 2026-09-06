@@ -38,6 +38,9 @@ import audiotag.metadata.value :
 import audiotag.id3v2.v24.text_information_write :
     measureId3v24Utf8TextInformationPayload;
 
+import audiotag.id3v2.v24.url_link_write :
+    measureId3v24UrlLinkPayload;
+
 import audiotag.id3v2.v24.canonical_target :
     Id3v24CanonicalTargetDefinition,
     Id3v24CanonicalTargetFamily,
@@ -191,6 +194,29 @@ textInformationPayloadRepresentable(
             auto measured =
                 measureId3v24Utf8TextInformationPayload(
                     list.values
+                );
+
+            return measured.hasValue;
+        },
+
+        _ => false
+    );
+}
+
+
+
+private bool
+urlLinkPayloadRepresentable(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    return field.value.match!(
+        (const(MetadataUrl) url)
+        {
+            auto measured =
+                measureId3v24UrlLinkPayload(
+                    url.value
                 );
 
             return measured.hasValue;
@@ -398,11 +424,20 @@ planId3v24CanonicalField(
 
         case Id3v24CanonicalTargetFamily.urlLink:
         {
+            if (!hasNoAdditionalContext(field))
+            {
+                status =
+                    Id3v24CanonicalFieldPlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
             status =
-                hasNoAdditionalContext(field)
+                urlLinkPayloadRepresentable(field)
                 ? Id3v24CanonicalFieldPlanStatus.ready
                 : Id3v24CanonicalFieldPlanStatus
-                    .unsupportedContext;
+                    .nativeConstraintViolation;
 
             break;
         }
@@ -853,6 +888,148 @@ unittest
     );
 
     assert(plan.target.frameId == "TIT2");
+}
+
+
+/// Ordinary ASCII URLs remain writable W*** targets.
+unittest
+{
+    const field =
+        urlField(
+            "commercialUrl",
+            "https://example.test/"
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus.ready
+    );
+
+    assert(plan.target.frameId == "WCOM");
+}
+
+
+/// ISO-8859-1 URL characters remain losslessly representable.
+unittest
+{
+    const field =
+        urlField(
+            "artistUrl",
+            "https://example.test/\u00E9"
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "WOAR");
+}
+
+
+/// Empty URLs retain a valid non-zero native W*** representation.
+unittest
+{
+    const field =
+        urlField(
+            "publisherUrl",
+            ""
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "WPUB");
+}
+
+
+/// Unicode outside ISO-8859-1 blocks ordinary W*** planning.
+unittest
+{
+    const field =
+        urlField(
+            "commercialUrl",
+            "https://example.test/\u20AC"
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "WCOM");
+}
+
+
+/// Embedded NUL cannot silently truncate an ordinary native URL.
+unittest
+{
+    const field =
+        urlField(
+            "audioFileUrl",
+            "abc\0def"
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "WOAF");
+}
+
+
+/// Unsupported canonical context takes precedence over payload encoding.
+unittest
+{
+    auto field =
+        urlField(
+            "commercialUrl",
+            "https://example.test/\u20AC"
+        );
+
+    field.description =
+        "not-representable-in-WCOM";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .unsupportedContext
+    );
 }
 
 
