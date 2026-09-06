@@ -379,6 +379,7 @@ version (unittest)
     import audiotag.metadata.value :
         MetadataText,
         MetadataTextList,
+        MetadataUrl,
         MetadataValue;
 
     import audiotag.id3v2.v24.canonical_mapping :
@@ -398,6 +399,9 @@ version (unittest)
 
     import audiotag.id3v2.v24.text_information :
         decodeId3v24TextInformationFrame;
+
+    import audiotag.id3v2.v24.url_link :
+        decodeId3v24UrlLinkFrame;
 
     import audiotag.id3v2.v24.writer_policy :
         Id3v24WriteContext;
@@ -428,6 +432,23 @@ version (unittest)
     {
         MetadataValue wrapped =
             MetadataTextList(values);
+
+        return
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+    }
+
+
+    private MetadataField urlField(
+        string key,
+        string value
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataUrl(value);
 
         return
             MetadataField(
@@ -496,6 +517,46 @@ version (unittest)
         return projection;
     }
 }
+
+
+    private Id3v24CanonicalProjection
+    projectionWithMappedUrl(
+        const(Id3v24TagStructure) source,
+        string key,
+        string url
+    )
+        @safe
+    {
+        auto cursor =
+            source.frameCursor();
+
+        auto frame =
+            cursor.parseId3v24FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v24NativeFrame.init;
+
+        native.envelope =
+            frame.value;
+
+        auto projection =
+            Id3v24CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v24CanonicalMappingResult.success(
+                urlField(
+                    key,
+                    url
+                )
+            )
+        );
+
+        return projection;
+    }
 
 
 /// Canonical replacement produces a complete strict-readable ID3v2.4 tag.
@@ -745,6 +806,261 @@ unittest
     assert(
         reparsed.value.envelope.header.tagSize ==
         26
+    );
+}
+
+
+/// Canonical URL replacement survives complete tag write and strict reparse.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One thirteen-byte WCOM frame.
+            0x00, 0x00, 0x00, 0x0D,
+
+            'W', 'C', 'O', 'M',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            'o', 'l', 'd'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedUrl(
+            source,
+            "commercialUrl",
+            "old"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        urlField(
+            "commercialUrl",
+            "https://new.test/"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                3000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * New WCOM:
+     *
+     *   10-byte frame header
+     *   17-byte URL payload
+     *
+     * so the new tag body is 27 bytes.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        27
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "WCOM"
+    );
+
+    auto decoded =
+        frame.value.decodeId3v24UrlLinkFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.link.url ==
+        "https://new.test/"
+    );
+}
+
+
+/// A newly appended ordinary URL survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        urlField(
+            "commercialUrl",
+            "https://example.test/"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                4000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     * New WCOM = 10-byte header + 21-byte URL = 31 bytes.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        43
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    /*
+     * Existing native order is retained and new canonical fields append
+     * after surviving source frames.
+     */
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "WCOM"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24UrlLinkFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.link.url ==
+        "https://example.test/"
     );
 }
 
