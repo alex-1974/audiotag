@@ -12,6 +12,10 @@ module audiotag.core.numeric;
 import audiotag.core.cursor : ByteCursor;
 import audiotag.core.error : ParseError, ParseErrorCode;
 import audiotag.core.result : ParseResult;
+import audiotag.core.serialization :
+    SerializationError,
+    SerializationErrorCode,
+    SerializationResult;
 
 
 /++
@@ -272,6 +276,166 @@ ParseResult!uint readSynchsafe32(ref ByteCursor cursor)
     return ParseResult!uint.success(value);
 }
 
+
+
+/++
+Encodes one unsigned integer as a four-byte synchsafe value.
+
+Each output byte contains seven payload bits and therefore has its most
+significant bit clear.
+
+The representable domain is 0 through `0x0FFF_FFFF`.
+
+Params:
+    value = Unsigned value to encode.
+
+Returns:
+    Four encoded bytes, or `valueOutOfRange` when `value` exceeds the
+    28-bit synchsafe domain.
++/
+SerializationResult!(ubyte[4])
+encodeSynchsafe32(uint value)
+    @safe pure nothrow @nogc
+{
+    enum uint maximum =
+        0x0FFF_FFFF;
+
+    if (value > maximum)
+    {
+        return
+            SerializationResult!(ubyte[4])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .valueOutOfRange,
+                        0,
+                        value,
+                        maximum
+                    )
+                );
+    }
+
+    ubyte[4] result;
+
+    result[0] =
+        cast(ubyte)(
+            (value >> 21) &
+            0x7F
+        );
+
+    result[1] =
+        cast(ubyte)(
+            (value >> 14) &
+            0x7F
+        );
+
+    result[2] =
+        cast(ubyte)(
+            (value >> 7) &
+            0x7F
+        );
+
+    result[3] =
+        cast(ubyte)(
+            value &
+            0x7F
+        );
+
+    return
+        SerializationResult!(ubyte[4])
+            .success(result);
+}
+
+
+/// Synchsafe encoding is the inverse of the existing decoder.
+unittest
+{
+    const encoded =
+        encodeSynchsafe32(
+            33140
+        );
+
+    assert(encoded.hasValue);
+
+    assert(
+        encoded.value[] ==
+        [
+            0x00,
+            0x02,
+            0x02,
+            0x74
+        ]
+    );
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                encoded.value[]
+            )
+        );
+
+    auto decoded =
+        cursor.readSynchsafe32();
+
+    assert(decoded.hasValue);
+    assert(decoded.value == 33140);
+    assert(cursor.empty);
+}
+
+
+/// Synchsafe encoding covers both numeric domain boundaries.
+unittest
+{
+    const minimum =
+        encodeSynchsafe32(0);
+
+    assert(minimum.hasValue);
+
+    assert(
+        minimum.value[] ==
+        [0x00, 0x00, 0x00, 0x00]
+    );
+
+    const maximum =
+        encodeSynchsafe32(
+            0x0FFF_FFFF
+        );
+
+    assert(maximum.hasValue);
+
+    assert(
+        maximum.value[] ==
+        [0x7F, 0x7F, 0x7F, 0x7F]
+    );
+}
+
+
+/// Values outside the 28-bit domain fail without truncation.
+unittest
+{
+    const result =
+        encodeSynchsafe32(
+            0x1000_0000
+        );
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        SerializationErrorCode
+            .valueOutOfRange
+    );
+
+    assert(
+        result.error.value ==
+        0x1000_0000
+    );
+
+    assert(
+        result.error.limit ==
+        0x0FFF_FFFF
+    );
+}
 
 import audiotag.core.span : ByteSpan;
 
