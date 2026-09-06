@@ -32,6 +32,9 @@ import audiotag.id3v2.v24.attached_picture :
     Id3v24PicturePayloadKind,
     Id3v24PictureType;
 
+import audiotag.id3v2.v24.picture_role :
+    findId3v24PictureRole;
+
 import audiotag.id3v2.v24.canonical_mapping :
     Id3v24CanonicalMappingResult,
     Id3v24CanonicalMappingStatus;
@@ -110,13 +113,18 @@ mapId3v24AttachedPictureFrameToCanonical(
             ]
         );
 
+    const role =
+        findId3v24PictureRole(
+            frame.pictureType
+        );
+
+    assert(role.found);
+
     field.qualifiers =
         [
             MetadataQualifier(
                 "pictureRole",
-                pictureRoleName(
-                    frame.pictureType
-                )
+                role.definition.name
             )
         ];
 
@@ -217,84 +225,6 @@ private MetadataBinary makeEmbeddedPictureBinary(
         logical,
         frame.mimeType
     );
-}
-
-
-/++
-Returns the canonical qualifier name of an ID3v2.4 picture role.
-
-All values defined by ID3v2.4 are represented explicitly.
-+/
-private string pictureRoleName(
-    Id3v24PictureType pictureType
-)
-    @safe pure nothrow @nogc
-{
-    final switch (pictureType)
-    {
-        case Id3v24PictureType.other:
-            return "other";
-
-        case Id3v24PictureType.fileIcon:
-            return "fileIcon";
-
-        case Id3v24PictureType.otherFileIcon:
-            return "otherFileIcon";
-
-        case Id3v24PictureType.frontCover:
-            return "frontCover";
-
-        case Id3v24PictureType.backCover:
-            return "backCover";
-
-        case Id3v24PictureType.leafletPage:
-            return "leafletPage";
-
-        case Id3v24PictureType.media:
-            return "media";
-
-        case Id3v24PictureType.leadArtist:
-            return "leadArtist";
-
-        case Id3v24PictureType.artist:
-            return "artist";
-
-        case Id3v24PictureType.conductor:
-            return "conductor";
-
-        case Id3v24PictureType.band:
-            return "band";
-
-        case Id3v24PictureType.composer:
-            return "composer";
-
-        case Id3v24PictureType.lyricist:
-            return "lyricist";
-
-        case Id3v24PictureType.recordingLocation:
-            return "recordingLocation";
-
-        case Id3v24PictureType.duringRecording:
-            return "duringRecording";
-
-        case Id3v24PictureType.duringPerformance:
-            return "duringPerformance";
-
-        case Id3v24PictureType.videoCapture:
-            return "videoCapture";
-
-        case Id3v24PictureType.brightColouredFish:
-            return "brightColouredFish";
-
-        case Id3v24PictureType.illustration:
-            return "illustration";
-
-        case Id3v24PictureType.artistLogotype:
-            return "artistLogotype";
-
-        case Id3v24PictureType.publisherLogotype:
-            return "publisherLogotype";
-    }
 }
 
 
