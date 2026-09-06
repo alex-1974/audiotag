@@ -374,7 +374,8 @@ version (unittest)
 
     import audiotag.metadata.field :
         MetadataField,
-        MetadataKey;
+        MetadataKey,
+        MetadataLanguage;
 
     import audiotag.metadata.value :
         MetadataText,
@@ -385,8 +386,14 @@ version (unittest)
     import audiotag.id3v2.v24.canonical_mapping :
         Id3v24CanonicalMappingResult;
 
+    import audiotag.id3v2.v24.comment :
+        decodeId3v24CommentFrame;
+
     import audiotag.id3v2.v24.frame :
         parseId3v24FrameEnvelope;
+
+    import audiotag.id3v2.v24.lyrics_text :
+        decodeId3v24LyricsTextFrame;
 
     import audiotag.id3v2.v24.native_frame :
         Id3v24NativeFrame;
@@ -494,6 +501,30 @@ version (unittest)
                 "userUrl",
                 url
             );
+
+        result.description =
+            description;
+
+        return result;
+    }
+
+
+    private MetadataField languageTextField(
+        string key,
+        string language,
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto result =
+            textField(
+                key,
+                value
+            );
+
+        result.language =
+            MetadataLanguage(language);
 
         result.description =
             description;
@@ -683,6 +714,53 @@ version (unittest)
                 userUrlField(
                     description,
                     url
+                )
+            )
+        );
+
+        return projection;
+    }
+}
+
+
+version (unittest)
+{
+    private Id3v24CanonicalProjection
+    projectionWithMappedLanguageText(
+        const(Id3v24TagStructure) source,
+        string key,
+        string language,
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto cursor =
+            source.frameCursor();
+
+        auto frame =
+            cursor.parseId3v24FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v24NativeFrame.init;
+
+        native.envelope =
+            frame.value;
+
+        auto projection =
+            Id3v24CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v24CanonicalMappingResult.success(
+                languageTextField(
+                    key,
+                    language,
+                    description,
+                    value
                 )
             )
         );
@@ -1745,6 +1823,591 @@ unittest
     assert(
         decoded.value.link.url ==
         "https://example.test/"
+    );
+}
+
+
+/// Canonical COMM replacement survives complete tag write and strict reparse.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twenty-one-byte COMM frame.
+            0x00, 0x00, 0x00, 0x15,
+
+            'C', 'O', 'M', 'M',
+            0x00, 0x00, 0x00, 0x0B,
+            0x00, 0x00,
+
+            0x03,
+            'e', 'n', 'g',
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedLanguageText(
+            source,
+            "comment",
+            "eng",
+            "key",
+            "old"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        languageTextField(
+            "comment",
+            "deu",
+            "note",
+            "neu"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                9000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Regenerated COMM payload:
+     *
+     *   $03 + "deu" + "note" + $00 + "neu"
+     *
+     * = 12 bytes.
+     *
+     * Complete COMM frame = 10 + 12 = 22-byte tag body.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        22
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "COMM"
+    );
+
+    auto decoded =
+        frame.value.decodeId3v24CommentFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.comment.language[] ==
+        "deu"
+    );
+
+    assert(
+        decoded.value.comment.description ==
+        "note"
+    );
+
+    assert(
+        decoded.value.comment.text ==
+        "neu"
+    );
+}
+
+
+/// A newly appended COMM survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        languageTextField(
+            "comment",
+            "eng",
+            "note",
+            "hello"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                10000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * COMM payload:
+     *
+     *   $03 + "eng" + "note" + $00 + "hello"
+     *
+     * = 14 bytes.
+     *
+     * Complete COMM = 24 bytes.
+     * Total tag body = 12 + 24 = 36.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        36
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "COMM"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24CommentFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.comment.language[] ==
+        "eng"
+    );
+
+    assert(
+        decoded.value.comment.description ==
+        "note"
+    );
+
+    assert(
+        decoded.value.comment.text ==
+        "hello"
+    );
+}
+
+
+/// Canonical USLT replacement survives complete tag write and strict reparse.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twenty-one-byte USLT frame.
+            0x00, 0x00, 0x00, 0x15,
+
+            'U', 'S', 'L', 'T',
+            0x00, 0x00, 0x00, 0x0B,
+            0x00, 0x00,
+
+            0x03,
+            'e', 'n', 'g',
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedLanguageText(
+            source,
+            "lyrics",
+            "eng",
+            "key",
+            "old"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        languageTextField(
+            "lyrics",
+            "deu",
+            "vers",
+            "zeile"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                11000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Regenerated USLT payload:
+     *
+     *   $03 + "deu" + "vers" + $00 + "zeile"
+     *
+     * = 14 bytes.
+     *
+     * Complete USLT frame = 10 + 14 = 24-byte tag body.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        24
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "USLT"
+    );
+
+    auto decoded =
+        frame.value.decodeId3v24LyricsTextFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.lyrics.language[] ==
+        "deu"
+    );
+
+    assert(
+        decoded.value.lyrics.descriptor ==
+        "vers"
+    );
+
+    assert(
+        decoded.value.lyrics.text ==
+        "zeile"
+    );
+}
+
+
+/// A newly appended USLT survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        languageTextField(
+            "lyrics",
+            "eng",
+            "lyrics",
+            "line1
+line2"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                12000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * USLT payload:
+     *
+     *   $03
+     *   "eng" = 3 bytes
+     *   "lyrics" = 6 bytes
+     *   $00
+     *   "line1\nline2" = 11 bytes
+     *
+     * Payload = 22 bytes.
+     * Complete USLT = 32 bytes.
+     * Total tag body = 12 + 32 = 44.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        44
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "USLT"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24LyricsTextFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.lyrics.language[] ==
+        "eng"
+    );
+
+    assert(
+        decoded.value.lyrics.descriptor ==
+        "lyrics"
+    );
+
+    assert(
+        decoded.value.lyrics.text ==
+        "line1
+line2"
     );
 }
 
