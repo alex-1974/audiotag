@@ -406,6 +406,9 @@ version (unittest)
     import audiotag.id3v2.v24.user_text :
         decodeId3v24UserTextFrame;
 
+    import audiotag.id3v2.v24.user_url :
+        decodeId3v24UserUrlFrame;
+
     import audiotag.id3v2.v24.writer_policy :
         Id3v24WriteContext;
 
@@ -471,6 +474,25 @@ version (unittest)
             textField(
                 "userText",
                 value
+            );
+
+        result.description =
+            description;
+
+        return result;
+    }
+
+
+    private MetadataField userUrlField(
+        string description,
+        string url
+    )
+        @safe
+    {
+        auto result =
+            urlField(
+                "userUrl",
+                url
             );
 
         result.description =
@@ -618,6 +640,49 @@ version (unittest)
                 userTextField(
                     description,
                     value
+                )
+            )
+        );
+
+        return projection;
+    }
+}
+
+
+version (unittest)
+{
+    private Id3v24CanonicalProjection
+    projectionWithMappedUserUrl(
+        const(Id3v24TagStructure) source,
+        string description,
+        string url
+    )
+        @safe
+    {
+        auto cursor =
+            source.frameCursor();
+
+        auto frame =
+            cursor.parseId3v24FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v24NativeFrame.init;
+
+        native.envelope =
+            frame.value;
+
+        auto projection =
+            Id3v24CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v24CanonicalMappingResult.success(
+                userUrlField(
+                    description,
+                    url
                 )
             )
         );
@@ -1402,6 +1467,284 @@ unittest
     assert(
         decoded.value.text.value ==
         "abc-123"
+    );
+}
+
+
+/// Canonical WXXX replacement survives complete tag write and strict reparse.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One eighteen-byte WXXX frame.
+            0x00, 0x00, 0x00, 0x12,
+
+            'W', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            0x03,
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedUserUrl(
+            source,
+            "key",
+            "old"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        userUrlField(
+            "new-key",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                7000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Regenerated WXXX semantic payload:
+     *
+     *   $03 + "new-key" + $00 + "new"
+     *
+     * = 12 bytes.
+     *
+     * Complete WXXX frame = 10 + 12 = 22-byte tag body.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        22
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "WXXX"
+    );
+
+    auto decoded =
+        frame.value.decodeId3v24UserUrlFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.link.description ==
+        "new-key"
+    );
+
+    assert(
+        decoded.value.link.url ==
+        "new"
+    );
+}
+
+
+/// A newly appended WXXX survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        userUrlField(
+            "homepage",
+            "https://example.test/"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                8000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * New WXXX payload:
+     *
+     *   $03
+     *   "homepage" = 8 bytes
+     *   $00
+     *   "https://example.test/" = 21 bytes
+     *
+     * Payload = 31 bytes.
+     * Complete WXXX = 10 + 31 = 41 bytes.
+     * Total tag body = 12 + 41 = 53 bytes.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        53
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    /*
+     * Existing native order is retained; new canonical frames append.
+     */
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "WXXX"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24UserUrlFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.link.description ==
+        "homepage"
+    );
+
+    assert(
+        decoded.value.link.url ==
+        "https://example.test/"
     );
 }
 
