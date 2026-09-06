@@ -747,3 +747,394 @@ unittest
     assert(cursor.remaining == 1);
     assert(cursor.front == 0x55);
 }
+
+
+import audiotag.id3v2.v23.data_cursor :
+    Id3v23DataCursor;
+
+
+/++
+Parses one ID3v2.3 frame header from a logical tag-body cursor.
+
+This overload is used when the enclosing ID3v2.3 tag body may be
+unsynchronised. All ten frame-header bytes are therefore consumed from
+the logical byte stream rather than directly from physical storage.
+
+Physical source offsets are retained for diagnostics and provenance.
+
+Params:
+    cursor = Logical cursor positioned at the first frame-header byte.
+
+Returns:
+    The parsed frame header or a structured parse error.
+
+Error semantics:
+    Any failure leaves `cursor` unchanged.
++/
+ParseResult!Id3v23FrameHeader
+parseId3v23FrameHeader(
+    ref Id3v23DataCursor cursor
+)
+    @safe pure nothrow @nogc
+{
+    auto probe =
+        cursor;
+
+    const sourceOffset =
+        probe.absoluteOffset;
+
+    char[4] id;
+
+    foreach (
+        index;
+        0 .. 4
+    )
+    {
+        auto byteResult =
+            probe.takeByte();
+
+        if (byteResult.hasError)
+        {
+            return
+                ParseResult!Id3v23FrameHeader
+                    .failure(
+                        byteResult.error
+                    );
+        }
+
+        const decoded =
+            byteResult.value;
+
+        const value =
+            decoded.value;
+
+        const valid =
+            (
+                value >= 'A' &&
+                value <= 'Z'
+            ) ||
+            (
+                value >= '0' &&
+                value <= '9'
+            );
+
+        if (!valid)
+        {
+            return
+                ParseResult!Id3v23FrameHeader
+                    .failure(
+                        ParseError(
+                            ParseErrorCode
+                                .invalidSignature,
+                            decoded.sourceOffset
+                        )
+                    );
+        }
+
+        id[index] =
+            cast(char) value;
+    }
+
+    /*
+     * The v2.3 frame-size field is a normal U32BE value. With
+     * tag-level unsynchronisation active its four logical bytes may
+     * occupy more than four physical source bytes.
+     */
+    const sizeOffset =
+        probe.absoluteOffset;
+
+    auto sizeResult =
+        probe.takeU32BE();
+
+    if (sizeResult.hasError)
+    {
+        return
+            ParseResult!Id3v23FrameHeader
+                .failure(
+                    sizeResult.error
+                );
+    }
+
+    if (
+        sizeResult.value == 0
+    )
+    {
+        return
+            ParseResult!Id3v23FrameHeader
+                .failure(
+                    ParseError(
+                        ParseErrorCode
+                            .invalidLength,
+                        sizeOffset
+                    )
+                );
+    }
+
+    auto statusResult =
+        probe.takeByte();
+
+    if (statusResult.hasError)
+    {
+        return
+            ParseResult!Id3v23FrameHeader
+                .failure(
+                    statusResult.error
+                );
+    }
+
+    const statusFlags =
+        statusResult.value.value;
+
+    if (
+        (statusFlags & 0x1F) != 0
+    )
+    {
+        return
+            ParseResult!Id3v23FrameHeader
+                .failure(
+                    ParseError(
+                        ParseErrorCode
+                            .invalidFlags,
+                        statusResult
+                            .value
+                            .sourceOffset
+                    )
+                );
+    }
+
+    auto formatResult =
+        probe.takeByte();
+
+    if (formatResult.hasError)
+    {
+        return
+            ParseResult!Id3v23FrameHeader
+                .failure(
+                    formatResult.error
+                );
+    }
+
+    const formatFlags =
+        formatResult.value.value;
+
+    if (
+        (formatFlags & 0x1F) != 0
+    )
+    {
+        return
+            ParseResult!Id3v23FrameHeader
+                .failure(
+                    ParseError(
+                        ParseErrorCode
+                            .invalidFlags,
+                        formatResult
+                            .value
+                            .sourceOffset
+                    )
+                );
+    }
+
+    const result =
+        Id3v23FrameHeader(
+            sourceOffset,
+            id,
+            sizeResult.value,
+            statusFlags,
+            formatFlags
+        );
+
+    cursor =
+        probe;
+
+    return
+        ParseResult!Id3v23FrameHeader
+            .success(result);
+}
+
+
+/// Logical frame-header parsing is identical without unsynchronisation.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0x55
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                3000
+            ),
+            false
+        );
+
+    auto result =
+        cursor.parseId3v23FrameHeader();
+
+    assert(result.hasValue);
+
+    const header =
+        result.value;
+
+    assert(header.sourceOffset == 3000);
+    assert(header.id[] == "TIT2");
+    assert(header.size == 3);
+    assert(header.statusFlags == 0);
+    assert(header.formatFlags == 0);
+
+    assert(cursor.logicalPosition == 10);
+    assert(cursor.physicalPosition == 10);
+    assert(cursor.absoluteOffset == 3010);
+    assert(cursor.remainingPhysical == 1);
+}
+
+
+/// Unsynchronisation may expand bytes inside the frame-size field.
+unittest
+{
+    /*
+     * Logical header:
+     *
+     *   TIT2 FF 00 00 01 00 00
+     *
+     * Physical header after tag-level unsynchronisation:
+     *
+     *   TIT2 FF 00 00 00 01 00 00
+     *
+     * The logical frame size is therefore $FF000001.
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+
+            0xFF,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+
+            0x00,
+            0x00,
+
+            0x55
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                3100
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v23FrameHeader();
+
+    assert(result.hasValue);
+
+    assert(
+        result.value.size ==
+        0xFF00_0001
+    );
+
+    assert(cursor.logicalPosition == 10);
+    assert(cursor.physicalPosition == 11);
+    assert(cursor.absoluteOffset == 3111);
+
+    assert(cursor.remainingPhysical == 1);
+    assert(cursor.remainingRaw.data == [0x55]);
+}
+
+
+/// Logical header failures preserve both logical and physical positions.
+unittest
+{
+    /*
+     * The size begins with an unsynchronised $FF but the logical
+     * header ends before all four logical size bytes are available.
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+            0xFF, 0x00,
+            0x01
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                3200
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v23FrameHeader();
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        ParseErrorCode.endOfSpan
+    );
+
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+    assert(cursor.absoluteOffset == 3200);
+}
+
+
+/// Logical flag diagnostics retain physical offsets after stuffing.
+unittest
+{
+    /*
+     * Stuffing occurs in the size field, shifting the physical status
+     * byte by one relative to its logical position.
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+
+            0xFF, 0x00,
+            0x00, 0x00, 0x01,
+
+            0x01,
+            0x00
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                3300
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v23FrameHeader();
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        ParseErrorCode.invalidFlags
+    );
+
+    /*
+     * Four ID bytes occupy offsets 3300..3303.
+     * The logical four-byte size occupies five physical bytes
+     * 3304..3308. Status therefore begins at 3309.
+     */
+    assert(result.error.offset == 3309);
+
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+}

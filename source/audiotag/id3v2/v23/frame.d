@@ -495,3 +495,294 @@ unittest
     assert(cursor.position == 0);
     assert(cursor.absoluteOffset == 2000);
 }
+
+
+import audiotag.id3v2.v23.data_cursor :
+    Id3v23DataCursor;
+
+
+/++
+Parses and bounds one complete ID3v2.3 frame from a logical tag-body
+cursor.
+
+The ten-byte frame header and the declared frame-data length are both
+interpreted in the logical byte stream. The returned `data` span
+preserves the complete physical source representation, including any
+ID3v2.3 unsynchronisation stuffing bytes.
+
+Params:
+    cursor = Logical cursor positioned at the first frame-header byte.
+
+Returns:
+    The parsed frame envelope or a structured parse error.
+
+Error semantics:
+    Any failure leaves `cursor` unchanged.
++/
+ParseResult!Id3v23FrameEnvelope
+parseId3v23FrameEnvelope(
+    ref Id3v23DataCursor cursor
+)
+    @safe pure nothrow @nogc
+{
+    auto probe =
+        cursor;
+
+    auto headerResult =
+        probe.parseId3v23FrameHeader();
+
+    if (headerResult.hasError)
+    {
+        return
+            ParseResult!Id3v23FrameEnvelope
+                .failure(
+                    headerResult.error
+                );
+    }
+
+    const header =
+        headerResult.value;
+
+    auto dataResult =
+        probe.takeLogicalRegion(
+            header.size
+        );
+
+    if (dataResult.hasError)
+    {
+        return
+            ParseResult!Id3v23FrameEnvelope
+                .failure(
+                    dataResult.error
+                );
+    }
+
+    const frame =
+        Id3v23FrameEnvelope(
+            header,
+            dataResult.value
+        );
+
+    cursor =
+        probe;
+
+    return
+        ParseResult!Id3v23FrameEnvelope
+            .success(frame);
+}
+
+
+/// Logical frame envelopes are unchanged without unsynchronisation.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0x11, 0x22, 0x33,
+
+            0x55
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                4000
+            ),
+            false
+        );
+
+    auto result =
+        cursor.parseId3v23FrameEnvelope();
+
+    assert(result.hasValue);
+
+    const frame =
+        result.value;
+
+    assert(frame.header.id[] == "TIT2");
+    assert(frame.header.size == 3);
+
+    assert(frame.data.sourceOffset == 4010);
+    assert(frame.data.length == 3);
+
+    assert(
+        frame.data.data ==
+        [0x11, 0x22, 0x33]
+    );
+
+    assert(frame.endOffset == 4013);
+
+    assert(cursor.logicalPosition == 13);
+    assert(cursor.physicalPosition == 13);
+    assert(cursor.absoluteOffset == 4013);
+
+    assert(cursor.remainingRaw.data == [0x55]);
+}
+
+
+/// Unsynchronised frame data preserves its expanded physical region.
+unittest
+{
+    /*
+     * Logical frame payload:
+     *
+     *   11 FF E1
+     *
+     * Physical payload:
+     *
+     *   11 FF 00 E1
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0x11,
+            0xFF, 0x00,
+            0xE1,
+
+            0x55
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                4100
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v23FrameEnvelope();
+
+    assert(result.hasValue);
+
+    const frame =
+        result.value;
+
+    assert(frame.header.size == 3);
+
+    assert(frame.data.sourceOffset == 4110);
+
+    /*
+     * Three logical payload bytes occupy four physical bytes.
+     */
+    assert(frame.data.length == 4);
+
+    assert(
+        frame.data.data ==
+        [
+            0x11,
+            0xFF, 0x00,
+            0xE1
+        ]
+    );
+
+    assert(frame.endOffset == 4114);
+
+    assert(cursor.logicalPosition == 13);
+    assert(cursor.physicalPosition == 14);
+    assert(cursor.absoluteOffset == 4114);
+
+    assert(cursor.remainingRaw.data == [0x55]);
+}
+
+
+/// Stuffing in both header and payload is handled in one logical frame.
+unittest
+{
+    /*
+     * Logical frame:
+     *
+     *   ABC1
+     *   00 00 00 03
+     *   00 00
+     *   FF E1 42
+     *
+     * Only the payload requires stuffing in this particular example.
+     * The test verifies that one logical cursor owns both stages.
+     */
+    const ubyte[] bytes =
+        [
+            'A', 'B', 'C', '1',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0xFF, 0x00,
+            0xE1,
+            0x42
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                4200
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v23FrameEnvelope();
+
+    assert(result.hasValue);
+
+    assert(result.value.header.id[] == "ABC1");
+    assert(result.value.header.size == 3);
+
+    assert(result.value.data.length == 4);
+
+    assert(cursor.logicalPosition == 13);
+    assert(cursor.physicalPosition == 14);
+    assert(cursor.empty);
+}
+
+
+/// Truncated logical frame data leaves the original cursor unchanged.
+unittest
+{
+    /*
+     * Declared logical payload size is three bytes, but only two
+     * logical bytes are present despite three physical bytes.
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0xFF, 0x00,
+            0x42
+        ];
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                bytes,
+                4300
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v23FrameEnvelope();
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        ParseErrorCode.endOfSpan
+    );
+
+    assert(result.error.offset == 4313);
+
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+    assert(cursor.absoluteOffset == 4300);
+}
