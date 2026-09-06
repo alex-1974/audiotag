@@ -41,6 +41,9 @@ import audiotag.id3v2.v24.text_information_write :
 import audiotag.id3v2.v24.user_text_write :
     measureId3v24Utf8UserTextPayload;
 
+import audiotag.id3v2.v24.user_url_write :
+    measureId3v24Utf8UserUrlPayload;
+
 import audiotag.id3v2.v24.url_link_write :
     measureId3v24UrlLinkPayload;
 
@@ -221,6 +224,29 @@ userTextPayloadRepresentable(
                 measureId3v24Utf8UserTextPayload(
                     field.description,
                     text.value
+                );
+
+            return measured.hasValue;
+        },
+
+        _ => false
+    );
+}
+
+
+private bool
+userUrlPayloadRepresentable(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    return field.value.match!(
+        (const(MetadataUrl) url)
+        {
+            auto measured =
+                measureId3v24Utf8UserUrlPayload(
+                    field.description,
+                    url.value
                 );
 
             return measured.hasValue;
@@ -499,14 +525,17 @@ planId3v24CanonicalField(
             )
             {
                 status =
-                    Id3v24NewFramePlanStatus
+                    Id3v24CanonicalFieldPlanStatus
                         .unsupportedContext;
+
+                break;
             }
-            else
-            {
-                status =
-                    Id3v24CanonicalFieldPlanStatus.ready;
-            }
+
+            status =
+                userUrlPayloadRepresentable(field)
+                ? Id3v24CanonicalFieldPlanStatus.ready
+                : Id3v24CanonicalFieldPlanStatus
+                    .nativeConstraintViolation;
 
             break;
         }
@@ -1125,6 +1154,166 @@ unittest
         plan.status ==
         Id3v24NewFramePlanStatus
             .invalidValueKind
+    );
+}
+
+
+/// WXXX planning consults the concrete user-URL payload codec.
+unittest
+{
+    auto field =
+        urlField(
+            "userUrl",
+            "https://example.test/"
+        );
+
+    field.description =
+        "homepage";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus.ready
+    );
+
+    assert(plan.target.frameId == "WXXX");
+}
+
+
+/// WXXX permits both an empty description and an empty URL.
+unittest
+{
+    const field =
+        urlField(
+            "userUrl",
+            ""
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "WXXX");
+}
+
+
+/// A WXXX URL outside ISO-8859-1 is rejected during planning.
+unittest
+{
+    auto field =
+        urlField(
+            "userUrl",
+            "https://example.test/\u20AC"
+        );
+
+    field.description =
+        "homepage";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "WXXX");
+}
+
+
+/// Embedded NUL cannot silently terminate a WXXX description early.
+unittest
+{
+    auto field =
+        urlField(
+            "userUrl",
+            "https://example.test/"
+        );
+
+    field.description =
+        "home\0page";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Embedded NUL cannot silently truncate the WXXX URL.
+unittest
+{
+    auto field =
+        urlField(
+            "userUrl",
+            "abc\0def"
+        );
+
+    field.description =
+        "homepage";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Unsupported WXXX context takes precedence over payload failure.
+unittest
+{
+    auto field =
+        urlField(
+            "userUrl",
+            "https://example.test/\u20AC"
+        );
+
+    field.description =
+        "homepage";
+
+    field.language =
+        MetadataLanguage("eng");
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .unsupportedContext
     );
 }
 
