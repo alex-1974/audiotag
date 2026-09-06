@@ -1,0 +1,982 @@
+/++
+Planning of one newly introduced canonical field as an ID3v2.4 frame.
+
+The reverse target registry identifies the deterministic native frame
+family for a canonical semantic key. This module adds field-level
+representability checks before serialization begins.
+
+The planner verifies:
+
+- a canonical ID3v2.4 target exists;
+- the canonical value has the expected value family;
+- no canonical context would be silently discarded;
+- required native context is present;
+- simple native constraints already known at planning time are met.
+
+No bytes are emitted here.
++/
+module audiotag.id3v2.v24.new_frame_plan;
+
+import std.sumtype :
+    match;
+
+import audiotag.metadata.field :
+    MetadataField,
+    MetadataKey;
+
+import audiotag.metadata.registry :
+    MetadataValueKind;
+
+import audiotag.metadata.value :
+    MetadataBinary,
+    MetadataInteger,
+    MetadataPicture,
+    MetadataText,
+    MetadataTextList,
+    MetadataUrl;
+
+import audiotag.id3v2.v24.canonical_target :
+    Id3v24CanonicalTargetDefinition,
+    Id3v24CanonicalTargetFamily,
+    findId3v24CanonicalTarget;
+
+
+/++
+Planning outcome for one new canonical field.
+
+Only `ready` may proceed to a future serializer.
++/
+enum Id3v24NewFramePlanStatus : ubyte
+{
+    /// A deterministic, lossless native target is currently available.
+    ready,
+
+    /// No ID3v2.4 reverse target exists for the canonical semantic key.
+    unsupportedCanonicalKey,
+
+    /// The field's value family disagrees with its canonical target.
+    invalidValueKind,
+
+    /// Native information required for lossless encoding is absent.
+    missingRequiredContext,
+
+    /// Canonical context is present that the native target cannot retain.
+    unsupportedContext,
+
+    /// Required context exists but violates a known native constraint.
+    nativeConstraintViolation
+}
+
+
+/++
+Write plan for one newly introduced canonical field.
+
+`newFieldIndex` refers to its position in `MetadataTreeEdit.newFields`.
+The field itself is deliberately not copied into the plan.
++/
+struct Id3v24NewFramePlan
+{
+    /// Index in the canonical edit overlay's new-field sequence.
+    size_t newFieldIndex;
+
+    /// Planning outcome.
+    Id3v24NewFramePlanStatus status;
+
+    /// Native target when one was found.
+    Id3v24CanonicalTargetDefinition target;
+
+    /++
+    Returns whether this new field may proceed to serialization.
+    +/
+    @property
+    bool writable() const
+        @safe pure nothrow @nogc
+    {
+        return status ==
+            Id3v24NewFramePlanStatus.ready;
+    }
+}
+
+
+private MetadataValueKind
+valueKindOf(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    return field.value.match!(
+        (const(MetadataText) value) =>
+            MetadataValueKind.text,
+
+        (const(MetadataTextList) value) =>
+            MetadataValueKind.textList,
+
+        (const(MetadataInteger) value) =>
+            MetadataValueKind.integer,
+
+        (const(MetadataUrl) value) =>
+            MetadataValueKind.url,
+
+        (const(MetadataBinary) value) =>
+            MetadataValueKind.binary,
+
+        (const(MetadataPicture) value) =>
+            MetadataValueKind.picture
+    );
+}
+
+
+private size_t
+qualifierCount(
+    ref const(MetadataField) field,
+    string name
+)
+    @safe pure nothrow @nogc
+{
+    size_t result;
+
+    foreach (const qualifier; field.qualifiers)
+    {
+        if (qualifier.name == name)
+            ++result;
+    }
+
+    return result;
+}
+
+
+private bool
+hasOnlyQualifier(
+    ref const(MetadataField) field,
+    string name
+)
+    @safe pure nothrow @nogc
+{
+    return
+        field.qualifiers.length == 1 &&
+        qualifierCount(field, name) == 1;
+}
+
+
+private bool
+hasNoAdditionalContext(
+    ref const(MetadataField) field
+)
+    @safe pure nothrow @nogc
+{
+    return
+        !field.hasLanguage &&
+        !field.hasDescription &&
+        !field.hasQualifiers;
+}
+
+
+private bool
+languageIsNativeThreeByteCode(
+    ref const(MetadataField) field
+)
+    @safe pure nothrow @nogc
+{
+    if (!field.hasLanguage)
+        return false;
+
+    const tag =
+        field.language.tag;
+
+    if (tag.length != 3)
+        return false;
+
+    foreach (ubyte value; tag)
+    {
+        if (value > 0x7F)
+            return false;
+    }
+
+    return true;
+}
+
+
+private bool
+artworkSourceHasRequiredContext(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    return field.value.match!(
+        (const(MetadataPicture) picture) =>
+            picture.source.match!(
+                (const(MetadataBinary) binary) =>
+                    binary.mediaType.length != 0,
+
+                (const(MetadataUrl) url) =>
+                    true
+            ),
+
+        _ => false
+    );
+}
+
+
+private bool
+ufidLengthRepresentable(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    return field.value.match!(
+        (const(MetadataBinary) binary) =>
+            binary.length <= 64,
+
+        _ => false
+    );
+}
+
+
+/++
+Plans one newly introduced canonical field for ID3v2.4 output.
+
+The function is intentionally conservative. Context that cannot yet be
+encoded losslessly rejects planning rather than being silently dropped.
+
+Rules by target family:
+
+- ordinary T*** and W***: no language, description or qualifiers;
+- TXXX/WXXX: description is permitted, language and qualifiers are not;
+- COMM/USLT: exactly one three-byte language code is required;
+  description is permitted;
+- APIC: `pictureRole` is required as the sole field qualifier; the
+  field-level language/description contexts are unsupported because
+  APIC description belongs to `MetadataPicture`; embedded binary
+  artwork requires a media type;
+- PRIV/UFID: `owner` is required as the sole qualifier; language and
+  description are unsupported;
+- UFID identifier data must not exceed 64 bytes.
+
+Params:
+    newFieldIndex = Position in `MetadataTreeEdit.newFields`.
+    field = Newly introduced canonical field.
+
+Returns:
+    Explicit field-level new-frame plan.
++/
+Id3v24NewFramePlan
+planId3v24NewCanonicalFrame(
+    size_t newFieldIndex,
+    ref const(MetadataField) field
+)
+    @safe
+{
+    const lookup =
+        findId3v24CanonicalTarget(
+            MetadataKey(
+                field.key.name
+            )
+        );
+
+    if (!lookup.found)
+    {
+        return
+            Id3v24NewFramePlan(
+                newFieldIndex,
+                Id3v24NewFramePlanStatus
+                    .unsupportedCanonicalKey,
+                Id3v24CanonicalTargetDefinition.init
+            );
+    }
+
+    const target =
+        lookup.definition;
+
+    if (
+        valueKindOf(field) !=
+        target.valueKind
+    )
+    {
+        return
+            Id3v24NewFramePlan(
+                newFieldIndex,
+                Id3v24NewFramePlanStatus
+                    .invalidValueKind,
+                target
+            );
+    }
+
+    Id3v24NewFramePlanStatus status;
+
+    final switch (target.family)
+    {
+        case Id3v24CanonicalTargetFamily.textInformation:
+        case Id3v24CanonicalTargetFamily.urlLink:
+        {
+            status =
+                hasNoAdditionalContext(field)
+                ? Id3v24NewFramePlanStatus.ready
+                : Id3v24NewFramePlanStatus
+                    .unsupportedContext;
+
+            break;
+        }
+
+        case Id3v24CanonicalTargetFamily.userText:
+        case Id3v24CanonicalTargetFamily.userUrl:
+        {
+            if (
+                field.hasLanguage ||
+                field.hasQualifiers
+            )
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+            }
+            else
+            {
+                status =
+                    Id3v24NewFramePlanStatus.ready;
+            }
+
+            break;
+        }
+
+        case Id3v24CanonicalTargetFamily.languageText:
+        {
+            if (!field.hasLanguage)
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .missingRequiredContext;
+
+                break;
+            }
+
+            if (!languageIsNativeThreeByteCode(field))
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .nativeConstraintViolation;
+
+                break;
+            }
+
+            status =
+                field.hasQualifiers
+                ? Id3v24NewFramePlanStatus
+                    .unsupportedContext
+                : Id3v24NewFramePlanStatus.ready;
+
+            break;
+        }
+
+        case Id3v24CanonicalTargetFamily.attachedPicture:
+        {
+            if (
+                field.hasLanguage ||
+                field.hasDescription
+            )
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            const roleCount =
+                qualifierCount(
+                    field,
+                    "pictureRole"
+                );
+
+            if (roleCount == 0)
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .missingRequiredContext;
+
+                break;
+            }
+
+            if (
+                !hasOnlyQualifier(
+                    field,
+                    "pictureRole"
+                )
+            )
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            status =
+                artworkSourceHasRequiredContext(field)
+                ? Id3v24NewFramePlanStatus.ready
+                : Id3v24NewFramePlanStatus
+                    .missingRequiredContext;
+
+            break;
+        }
+
+        case Id3v24CanonicalTargetFamily.privateData:
+        case Id3v24CanonicalTargetFamily.uniqueFileIdentifier:
+        {
+            if (
+                field.hasLanguage ||
+                field.hasDescription
+            )
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            const ownerCount =
+                qualifierCount(
+                    field,
+                    "owner"
+                );
+
+            if (ownerCount == 0)
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .missingRequiredContext;
+
+                break;
+            }
+
+            if (
+                !hasOnlyQualifier(
+                    field,
+                    "owner"
+                )
+            )
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            if (
+                target.family ==
+                    Id3v24CanonicalTargetFamily
+                        .uniqueFileIdentifier &&
+                !ufidLengthRepresentable(field)
+            )
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .nativeConstraintViolation;
+
+                break;
+            }
+
+            status =
+                Id3v24NewFramePlanStatus.ready;
+
+            break;
+        }
+    }
+
+    return
+        Id3v24NewFramePlan(
+            newFieldIndex,
+            status,
+            target
+        );
+}
+
+
+version (unittest)
+{
+    import audiotag.metadata.field :
+        MetadataLanguage,
+        MetadataQualifier;
+
+    import audiotag.metadata.value :
+        MetadataPictureSource,
+        MetadataValue;
+
+
+    private MetadataField textField(
+        string key,
+        string value
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataText(value);
+
+        return
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+    }
+
+
+    private MetadataField textListField(
+        string key,
+        string[] values
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataTextList(values);
+
+        return
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+    }
+
+
+    private MetadataField urlField(
+        string key,
+        string value
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataUrl(value);
+
+        return
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+    }
+
+
+    private MetadataField binaryField(
+        string key,
+        const(ubyte)[] data,
+        string qualifierName = "",
+        string qualifierValue = ""
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataBinary.copyFrom(data);
+
+        auto field =
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+
+        if (qualifierName.length != 0)
+        {
+            field.qualifiers =
+                [
+                    MetadataQualifier(
+                        qualifierName,
+                        qualifierValue
+                    )
+                ];
+        }
+
+        return field;
+    }
+}
+
+
+/// A normal new title has one deterministic writable target.
+unittest
+{
+    const field =
+        textField(
+            "title",
+            "New title"
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            3,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.newFieldIndex == 3);
+    assert(plan.target.frameId == "TIT2");
+}
+
+
+/// Artist lists target TPE1 without collapsing ordered values.
+unittest
+{
+    const field =
+        textListField(
+            "artist",
+            ["Artist A", "Artist B"]
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "TPE1");
+}
+
+
+/// Unknown canonical semantics remain explicitly unsupported.
+unittest
+{
+    const field =
+        textField(
+            "futureSemantic",
+            "x"
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .unsupportedCanonicalKey
+    );
+}
+
+
+/// A known canonical key with the wrong value family is rejected.
+unittest
+{
+    const field =
+        textField(
+            "artist",
+            "Not a text list"
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .invalidValueKind
+    );
+}
+
+
+/// TXXX permits its canonical description but not language context.
+unittest
+{
+    auto field =
+        textField(
+            "userText",
+            "value"
+        );
+
+    field.description =
+        "custom-key";
+
+    auto plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "TXXX");
+
+    field.language =
+        MetadataLanguage("eng");
+
+    plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .unsupportedContext
+    );
+}
+
+
+/// COMM requires a native three-byte language code.
+unittest
+{
+    auto field =
+        textField(
+            "comment",
+            "Example"
+        );
+
+    auto plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .missingRequiredContext
+    );
+
+    field.language =
+        MetadataLanguage("eng");
+
+    field.description =
+        "short";
+
+    plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "COMM");
+
+    field.language =
+        MetadataLanguage("english");
+
+    plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// PRIV requires exactly one owner qualifier.
+unittest
+{
+    auto field =
+        binaryField(
+            "privateData",
+            [cast(ubyte) 0x01]
+        );
+
+    auto plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .missingRequiredContext
+    );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "example.invalid/private"
+            )
+        ];
+
+    plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "PRIV");
+}
+
+
+/// UFID retains the native 64-byte identifier limit.
+unittest
+{
+    ubyte[64] acceptedBytes;
+    ubyte[65] rejectedBytes;
+
+    auto accepted =
+        binaryField(
+            "uniqueFileIdentifier",
+            acceptedBytes[],
+            "owner",
+            "https://example.invalid/id"
+        );
+
+    auto plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            accepted
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "UFID");
+
+    auto rejected =
+        binaryField(
+            "uniqueFileIdentifier",
+            rejectedBytes[],
+            "owner",
+            "https://example.invalid/id"
+        );
+
+    plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            rejected
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Embedded APIC artwork requires MIME type and picture-role context.
+unittest
+{
+    MetadataPictureSource sourceWithoutMime =
+        MetadataBinary.copyFrom(
+            [cast(ubyte) 0xFF]
+        );
+
+    MetadataValue valueWithoutMime =
+        MetadataPicture(
+            "Cover",
+            sourceWithoutMime
+        );
+
+    auto field =
+        MetadataField(
+            MetadataKey("artwork"),
+            valueWithoutMime
+        );
+
+    auto plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .missingRequiredContext
+    );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "pictureRole",
+                "frontCover"
+            )
+        ];
+
+    plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .missingRequiredContext
+    );
+
+    MetadataPictureSource sourceWithMime =
+        MetadataBinary.copyFrom(
+            [cast(ubyte) 0xFF],
+            "image/jpeg"
+        );
+
+    MetadataValue valueWithMime =
+        MetadataPicture(
+            "Cover",
+            sourceWithMime
+        );
+
+    field =
+        MetadataField(
+            MetadataKey("artwork"),
+            valueWithMime,
+            [],
+            MetadataLanguage.init,
+            "",
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    "frontCover"
+                )
+            ]
+        );
+
+    plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "APIC");
+}
+
+
+/// Linked APIC artwork does not require an image MIME type.
+unittest
+{
+    MetadataPictureSource source =
+        MetadataUrl(
+            "https://example.invalid/cover.jpg"
+        );
+
+    MetadataValue value =
+        MetadataPicture(
+            "Cover",
+            source
+        );
+
+    const field =
+        MetadataField(
+            MetadataKey("artwork"),
+            value,
+            [],
+            MetadataLanguage.init,
+            "",
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    "frontCover"
+                )
+            ]
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+}
