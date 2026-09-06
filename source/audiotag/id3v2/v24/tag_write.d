@@ -398,6 +398,9 @@ version (unittest)
     import audiotag.id3v2.v24.private_frame :
         decodeId3v24PrivateFrame;
 
+    import audiotag.id3v2.v24.unique_file_identifier :
+        decodeId3v24UniqueFileIdentifierFrame;
+
     import audiotag.id3v2.v24.comment :
         decodeId3v24CommentFrame;
 
@@ -634,6 +637,38 @@ version (unittest)
         auto result =
             MetadataField(
                 MetadataKey("privateData"),
+                wrapped
+            );
+
+        result.qualifiers =
+            [
+                MetadataQualifier(
+                    "owner",
+                    owner
+                )
+            ];
+
+        return result;
+    }
+
+
+    private MetadataField
+    uniqueFileIdentifierField(
+        string owner,
+        const(ubyte)[] identifier
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataBinary.copyFrom(
+                identifier
+            );
+
+        auto result =
+            MetadataField(
+                MetadataKey(
+                    "uniqueFileIdentifier"
+                ),
                 wrapped
             );
 
@@ -967,6 +1002,49 @@ version (unittest)
                 privateDataField(
                     owner,
                     data
+                )
+            )
+        );
+
+        return projection;
+    }
+}
+
+
+version (unittest)
+{
+    private Id3v24CanonicalProjection
+    projectionWithMappedUniqueFileIdentifier(
+        const(Id3v24TagStructure) source,
+        string owner,
+        const(ubyte)[] identifier
+    )
+        @safe
+    {
+        auto cursor =
+            source.frameCursor();
+
+        auto frame =
+            cursor.parseId3v24FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v24NativeFrame.init;
+
+        native.envelope =
+            frame.value;
+
+        auto projection =
+            Id3v24CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v24CanonicalMappingResult.success(
+                uniqueFileIdentifierField(
+                    owner,
+                    identifier
                 )
             )
         );
@@ -3417,6 +3495,323 @@ unittest
             0xFE,
             0xFF
         ]
+    );
+}
+
+
+/// Canonical UFID replacement survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // Complete tag body = one 24-byte UFID frame.
+            0x00, 0x00, 0x00, 0x18,
+
+            'U', 'F', 'I', 'D',
+            0x00, 0x00, 0x00, 0x0E,
+            0x00, 0x00,
+
+            'o', 'l', 'd', '.',
+            'e', 'x', 'a', 'm', 'p', 'l', 'e',
+            0x00,
+
+            0x11, 0x22
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedUniqueFileIdentifier(
+            source,
+            "old.example",
+            [
+                cast(ubyte) 0x11,
+                cast(ubyte) 0x22
+            ]
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        uniqueFileIdentifierField(
+            "new.example",
+            [
+                cast(ubyte) 0xAA,
+                cast(ubyte) 0x00,
+                cast(ubyte) 0xFF
+            ]
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                13000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Regenerated semantic UFID payload:
+     *
+     *   "new.example" 00 AA 00 FF
+     *
+     * owner      = 11 bytes
+     * terminator =  1 byte
+     * identifier =  3 bytes
+     *
+     * payload = 15 bytes
+     * frame   = 10 + 15 = 25 bytes
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        25
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "UFID"
+    );
+
+    auto decoded =
+        frame.value
+            .decodeId3v24UniqueFileIdentifierFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.uniqueFileIdentifier
+            .ownerIdentifier ==
+        "new.example"
+    );
+
+    assert(
+        decoded.value.uniqueFileIdentifier
+            .rawIdentifier.data ==
+        [
+            0xAA,
+            0x00,
+            0xFF
+        ]
+    );
+
+    assert(
+        decoded.value.uniqueFileIdentifier
+            .logicalIdentifierLength ==
+        3
+    );
+}
+
+
+/// Newly appended UFID survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        uniqueFileIdentifierField(
+            "example.com",
+            [
+                cast(ubyte) 0x11,
+                cast(ubyte) 0x00,
+                cast(ubyte) 0xFE,
+                cast(ubyte) 0xFF
+            ]
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                14000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * New UFID semantic payload:
+     *
+     *   "example.com" 00 11 00 FE FF
+     *
+     * = 16 bytes.
+     *
+     * UFID frame = 10 + 16 = 26 bytes.
+     *
+     * Complete tag body = 12 + 26 = 38 bytes.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        38
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "UFID"
+    );
+
+    auto decoded =
+        second.value
+            .decodeId3v24UniqueFileIdentifierFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.uniqueFileIdentifier
+            .ownerIdentifier ==
+        "example.com"
+    );
+
+    assert(
+        decoded.value.uniqueFileIdentifier
+            .rawIdentifier.data ==
+        [
+            0x11,
+            0x00,
+            0xFE,
+            0xFF
+        ]
+    );
+
+    assert(
+        decoded.value.uniqueFileIdentifier
+            .logicalIdentifierLength ==
+        4
     );
 }
 
