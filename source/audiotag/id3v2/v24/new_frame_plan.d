@@ -451,6 +451,47 @@ artworkPayloadRepresentable(
 
 
 private bool
+privatePayloadRepresentable(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    import audiotag.id3v2.v24.private_write :
+        measureId3v24PrivatePayload;
+
+    if (
+        field.qualifiers.length != 1 ||
+        field.qualifiers[0].name != "owner"
+    )
+    {
+        return false;
+    }
+
+    return field.value.match!(
+        (const(MetadataBinary) binary)
+        {
+            /*
+             * PRIV has no native media-type field. Accepting one here
+             * would silently discard canonical information.
+             */
+            if (binary.mediaType.length != 0)
+                return false;
+
+            auto measured =
+                measureId3v24PrivatePayload(
+                    field.qualifiers[0].value,
+                    binary.data
+                );
+
+            return measured.hasValue;
+        },
+
+        _ => false
+    );
+}
+
+
+private bool
 ufidLengthRepresentable(
     ref const(MetadataField) field
 )
@@ -781,6 +822,34 @@ planId3v24CanonicalField(
                 status =
                     Id3v24NewFramePlanStatus
                         .unsupportedContext;
+
+                break;
+            }
+
+            if (
+                target.family ==
+                    Id3v24CanonicalTargetFamily
+                        .privateData &&
+                ownerCount != 1
+            )
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            if (
+                target.family ==
+                    Id3v24CanonicalTargetFamily
+                        .privateData &&
+                !privatePayloadRepresentable(field)
+            )
+            {
+                status =
+                    Id3v24CanonicalFieldPlanStatus
+                        .nativeConstraintViolation;
 
                 break;
             }
@@ -1701,6 +1770,181 @@ unittest
 
     assert(plan.writable);
     assert(plan.target.frameId == "PRIV");
+}
+
+
+/// PRIV owner must be representable by the concrete native payload codec.
+unittest
+{
+    auto field =
+        binaryField(
+            "privateData",
+            [cast(ubyte) 0x01]
+        );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "owner/\u20AC"
+            )
+        ];
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "PRIV");
+}
+
+
+/// Embedded NUL cannot silently truncate a planned PRIV owner.
+unittest
+{
+    auto field =
+        binaryField(
+            "privateData",
+            [
+                cast(ubyte) 0x00,
+                cast(ubyte) 0xFF
+            ]
+        );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "owner\0suffix"
+            )
+        ];
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Empty PRIV owner remains representable because the reader permits it.
+unittest
+{
+    auto field =
+        binaryField(
+            "privateData",
+            []
+        );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                ""
+            )
+        ];
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "PRIV");
+}
+
+
+/// PRIV cannot silently discard a canonical binary media type.
+unittest
+{
+    MetadataValue wrapped =
+        MetadataBinary.copyFrom(
+            [cast(ubyte) 0x01],
+            "application/octet-stream"
+        );
+
+    auto field =
+        MetadataField(
+            MetadataKey("privateData"),
+            wrapped
+        );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "example.invalid/private"
+            )
+        ];
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Duplicate PRIV owner qualifiers are unsupported canonical context.
+unittest
+{
+    auto field =
+        binaryField(
+            "privateData",
+            [cast(ubyte) 0x01]
+        );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "one"
+            ),
+            MetadataQualifier(
+                "owner",
+                "two"
+            )
+        ];
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .unsupportedContext
+    );
 }
 
 
