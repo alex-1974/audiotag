@@ -44,7 +44,8 @@ Canonical mutation tracking belongs to a later editing/diff layer.
 enum Id3v24CanonicalFrameMutation : ubyte
 {
     unchanged,
-    modified
+    modified,
+    removed
 }
 
 
@@ -145,36 +146,63 @@ planId3v24CanonicalFrameWrite(
     {
         case Id3v24CanonicalMappingStatus.mapped:
         {
-            if (
-                mutation ==
-                Id3v24CanonicalFrameMutation.unchanged
-            )
+            final switch (mutation)
             {
-                action =
-                    Id3v24FrameWriteAction
-                        .preserveOriginal;
-
-                break;
-            }
-
-            const modificationAction =
-                decideId3v24MappedFrameModificationAction(
-                    record.native.envelope.header
-                );
-
-            final switch (modificationAction)
-            {
-                case Id3v24MappedFrameModificationAction.regenerate:
+                case Id3v24CanonicalFrameMutation.unchanged:
                     action =
                         Id3v24FrameWriteAction
-                            .regenerate;
+                            .preserveOriginal;
                     break;
 
-                case Id3v24MappedFrameModificationAction.rejectWrite:
-                    action =
-                        Id3v24FrameWriteAction
-                            .rejectWrite;
+                case Id3v24CanonicalFrameMutation.modified:
+                {
+                    const modificationAction =
+                        decideId3v24MappedFrameModificationAction(
+                            record.native.envelope.header
+                        );
+
+                    final switch (modificationAction)
+                    {
+                        case Id3v24MappedFrameModificationAction.regenerate:
+                            action =
+                                Id3v24FrameWriteAction
+                                    .regenerate;
+                            break;
+
+                        case Id3v24MappedFrameModificationAction.rejectWrite:
+                            action =
+                                Id3v24FrameWriteAction
+                                    .rejectWrite;
+                            break;
+                    }
+
                     break;
+                }
+
+                case Id3v24CanonicalFrameMutation.removed:
+                {
+                    const modificationAction =
+                        decideId3v24MappedFrameModificationAction(
+                            record.native.envelope.header
+                        );
+
+                    final switch (modificationAction)
+                    {
+                        case Id3v24MappedFrameModificationAction.regenerate:
+                            action =
+                                Id3v24FrameWriteAction
+                                    .discard;
+                            break;
+
+                        case Id3v24MappedFrameModificationAction.rejectWrite:
+                            action =
+                                Id3v24FrameWriteAction
+                                    .rejectWrite;
+                            break;
+                    }
+
+                    break;
+                }
             }
 
             break;
@@ -185,8 +213,8 @@ planId3v24CanonicalFrameWrite(
         case Id3v24CanonicalMappingStatus.unrepresentableValueShape:
         {
             if (
-                mutation ==
-                Id3v24CanonicalFrameMutation.modified
+                mutation !=
+                Id3v24CanonicalFrameMutation.unchanged
             )
             {
                 action =
@@ -533,6 +561,55 @@ unittest
         planId3v24CanonicalFrameWrite(
             record,
             Id3v24CanonicalFrameMutation.modified,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.action ==
+        Id3v24FrameWriteAction.rejectWrite
+    );
+}
+
+
+/// Removing a writable mapped field discards its original native frame.
+unittest
+{
+    const record =
+        testRecord(
+            Id3v24CanonicalMappingStatus.mapped
+        );
+
+    const plan =
+        planId3v24CanonicalFrameWrite(
+            record,
+            Id3v24CanonicalFrameMutation.removed,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+
+    assert(
+        plan.action ==
+        Id3v24FrameWriteAction.discard
+    );
+}
+
+
+/// Removing a native read-only mapped field rejects the write.
+unittest
+{
+    const record =
+        testRecord(
+            Id3v24CanonicalMappingStatus.mapped,
+            0x10
+        );
+
+    const plan =
+        planId3v24CanonicalFrameWrite(
+            record,
+            Id3v24CanonicalFrameMutation.removed,
             Id3v24WriteContext.tagOnly()
         );
 
