@@ -35,6 +35,9 @@ import audiotag.metadata.value :
     MetadataTextList,
     MetadataUrl;
 
+import audiotag.id3v2.v24.text_information_write :
+    measureId3v24Utf8TextInformationPayload;
+
 import audiotag.id3v2.v24.canonical_target :
     Id3v24CanonicalTargetDefinition,
     Id3v24CanonicalTargetFamily,
@@ -159,6 +162,41 @@ valueKindOf(
 
         (const(MetadataPicture) value) =>
             MetadataValueKind.picture
+    );
+}
+
+
+private bool
+textInformationPayloadRepresentable(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    return field.value.match!(
+        (const(MetadataText) text)
+        {
+            const(string)[] values =
+                [text.value];
+
+            auto measured =
+                measureId3v24Utf8TextInformationPayload(
+                    values
+                );
+
+            return measured.hasValue;
+        },
+
+        (const(MetadataTextList) list)
+        {
+            auto measured =
+                measureId3v24Utf8TextInformationPayload(
+                    list.values
+                );
+
+            return measured.hasValue;
+        },
+
+        _ => false
     );
 }
 
@@ -338,13 +376,32 @@ planId3v24CanonicalField(
 
     final switch (target.family)
     {
-        case Id3v24CanonicalTargetFamily.textInformation:
+                case Id3v24CanonicalTargetFamily.textInformation:
+        {
+            if (!hasNoAdditionalContext(field))
+            {
+                status =
+                    Id3v24CanonicalFieldPlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            status =
+                textInformationPayloadRepresentable(field)
+                ? Id3v24CanonicalFieldPlanStatus.ready
+                : Id3v24CanonicalFieldPlanStatus
+                    .nativeConstraintViolation;
+
+            break;
+        }
+
         case Id3v24CanonicalTargetFamily.urlLink:
         {
             status =
                 hasNoAdditionalContext(field)
                 ? Id3v24CanonicalFieldPlanStatus.ready
-                : Id3v24NewFramePlanStatus
+                : Id3v24CanonicalFieldPlanStatus
                     .unsupportedContext;
 
             break;
@@ -744,6 +801,58 @@ unittest
 
     assert(plan.writable);
     assert(plan.target.frameId == "TPE1");
+}
+
+
+/// Empty artist lists cannot be represented losslessly as TPE1.
+unittest
+{
+    const field =
+        textListField(
+            "artist",
+            []
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "TPE1");
+}
+
+
+/// Embedded NUL text cannot silently become multiple native values.
+unittest
+{
+    const field =
+        textField(
+            "title",
+            "A\0B"
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "TIT2");
 }
 
 
