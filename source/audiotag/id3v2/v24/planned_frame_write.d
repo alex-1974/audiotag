@@ -67,6 +67,10 @@ import audiotag.id3v2.v24.url_link_frame_write :
     serializeNewId3v24UrlLinkFrame,
     serializeRegeneratedId3v24UrlLinkFrame;
 
+import audiotag.id3v2.v24.user_text_frame_write :
+    serializeNewId3v24UserTextFrame,
+    serializeRegeneratedId3v24UserTextFrame;
+
 
 /++
 Result type for executing one planned existing-frame regeneration.
@@ -422,6 +426,18 @@ serializeId3v24PlannedRegeneration(
             break;
         }
 
+        case Id3v24CanonicalTargetFamily
+            .userText:
+        {
+            serialized =
+                serializeRegeneratedId3v24UserTextFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -592,6 +608,15 @@ serializeId3v24PlannedNewFrame(
                     ]
                 );
 
+        case Id3v24CanonicalTargetFamily
+            .userText:
+            return
+                serializeNewId3v24UserTextFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
         default:
             return
                 SerializationResult!(ubyte[])
@@ -672,6 +697,25 @@ version (unittest)
                 MetadataKey(key),
                 wrapped
             );
+    }
+
+
+    private MetadataField userTextField(
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto result =
+            textField(
+                "userText",
+                value
+            );
+
+        result.description =
+            description;
+
+        return result;
     }
 
 
@@ -988,7 +1032,7 @@ unittest
 }
 
 
-/// Semantically valid but not yet executable families remain explicit.
+/// A planned new TXXX frame dispatches through the user-text serializer.
 unittest
 {
     const projection =
@@ -999,13 +1043,9 @@ unittest
             projection.metadata
         );
 
-    /*
-     * TXXX is already semantically planned but does not yet have a
-     * physical writer in the generic dispatcher.
-     */
     edit.appendNewField(
-        textField(
-            "userText",
+        userTextField(
+            "custom-key",
             "value"
         )
     );
@@ -1026,12 +1066,122 @@ unittest
             0
         );
 
-    assert(serialized.hasError);
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(serialized.value[])
+        );
+
+    auto frame =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
 
     assert(
-        serialized.error.code ==
-        SerializationErrorCode
-            .unsupportedRepresentation
+        frame.value.header.id[] ==
+        "TXXX"
+    );
+
+    assert(
+        frame.value.data.data ==
+        [
+            0x03,
+            'c', 'u', 's', 't', 'o', 'm', '-', 'k', 'e', 'y',
+            0x00,
+            'v', 'a', 'l', 'u', 'e'
+        ]
+    );
+}
+
+
+/// A modified mapped TXXX frame dispatches to user-text regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'T', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            0x03,
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            userTextField(
+                "key",
+                "old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        userTextField(
+            "new-key",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v24PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+
+    auto serialized =
+        executed.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(serialized.value[])
+        );
+
+    auto frame =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "TXXX"
+    );
+
+    assert(
+        frame.value.data.data ==
+        [
+            0x03,
+            'n', 'e', 'w', '-', 'k', 'e', 'y',
+            0x00,
+            'n', 'e', 'w'
+        ]
     );
 }
 
