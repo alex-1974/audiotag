@@ -375,9 +375,13 @@ version (unittest)
     import audiotag.metadata.field :
         MetadataField,
         MetadataKey,
-        MetadataLanguage;
+        MetadataLanguage,
+        MetadataQualifier;
 
     import audiotag.metadata.value :
+        MetadataBinary,
+        MetadataPicture,
+        MetadataPictureSource,
         MetadataText,
         MetadataTextList,
         MetadataUrl,
@@ -385,6 +389,11 @@ version (unittest)
 
     import audiotag.id3v2.v24.canonical_mapping :
         Id3v24CanonicalMappingResult;
+
+    import audiotag.id3v2.v24.attached_picture :
+        Id3v24PicturePayloadKind,
+        Id3v24PictureType,
+        decodeId3v24AttachedPictureFrame;
 
     import audiotag.id3v2.v24.comment :
         decodeId3v24CommentFrame;
@@ -528,6 +537,80 @@ version (unittest)
 
         result.description =
             description;
+
+        return result;
+    }
+
+
+    private MetadataField
+    embeddedArtworkField(
+        string role,
+        string description,
+        string mimeType,
+        const(ubyte)[] data
+    )
+        @safe
+    {
+        MetadataPictureSource source =
+            MetadataBinary.copyFrom(
+                data,
+                mimeType
+            );
+
+        MetadataValue wrapped =
+            MetadataPicture(
+                description,
+                source
+            );
+
+        auto result =
+            MetadataField(
+                MetadataKey("artwork"),
+                wrapped
+            );
+
+        result.qualifiers =
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    role
+                )
+            ];
+
+        return result;
+    }
+
+
+    private MetadataField
+    linkedArtworkField(
+        string role,
+        string description,
+        string url
+    )
+        @safe
+    {
+        MetadataPictureSource source =
+            MetadataUrl(url);
+
+        MetadataValue wrapped =
+            MetadataPicture(
+                description,
+                source
+            );
+
+        auto result =
+            MetadataField(
+                MetadataKey("artwork"),
+                wrapped
+            );
+
+        result.qualifiers =
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    role
+                )
+            ];
 
         return result;
     }
@@ -761,6 +844,53 @@ version (unittest)
                     language,
                     description,
                     value
+                )
+            )
+        );
+
+        return projection;
+    }
+}
+
+
+version (unittest)
+{
+    private Id3v24CanonicalProjection
+    projectionWithMappedEmbeddedArtwork(
+        const(Id3v24TagStructure) source,
+        string role,
+        string description,
+        string mimeType,
+        const(ubyte)[] data
+    )
+        @safe
+    {
+        auto cursor =
+            source.frameCursor();
+
+        auto frame =
+            cursor.parseId3v24FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v24NativeFrame.init;
+
+        native.envelope =
+            frame.value;
+
+        auto projection =
+            Id3v24CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v24CanonicalMappingResult.success(
+                embeddedArtworkField(
+                    role,
+                    description,
+                    mimeType,
+                    data
                 )
             )
         );
@@ -2408,6 +2538,510 @@ line2"
         decoded.value.lyrics.text ==
         "line1
 line2"
+    );
+}
+
+
+/// Canonical embedded artwork replacement survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One 29-byte APIC frame.
+            0x00, 0x00, 0x00, 0x1D,
+
+            'A', 'P', 'I', 'C',
+            0x00, 0x00, 0x00, 0x13,
+            0x00, 0x00,
+
+            0x03,
+
+            'i', 'm', 'a', 'g', 'e', '/',
+            'j', 'p', 'e', 'g',
+            0x00,
+
+            0x03,
+
+            'O', 'l', 'd',
+            0x00,
+
+            0xFF, 0xD8
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedEmbeddedArtwork(
+            source,
+            "frontCover",
+            "Old",
+            "image/jpeg",
+            [
+                cast(ubyte) 0xFF,
+                cast(ubyte) 0xD8
+            ]
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        embeddedArtworkField(
+            "backCover",
+            "New",
+            "image/png",
+            [
+                cast(ubyte) 0x89,
+                cast(ubyte) 0x50,
+                cast(ubyte) 0x4E,
+                cast(ubyte) 0x47
+            ]
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                8000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Regenerated semantic APIC payload:
+     *
+     *   03
+     *   "image/png" 00
+     *   backCover = 04
+     *   "New" 00
+     *   89 50 4E 47
+     *
+     * = 20 bytes.
+     *
+     * Complete APIC = 10 + 20 = 30-byte tag body.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        30
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "APIC"
+    );
+
+    auto decoded =
+        frame.value.decodeId3v24AttachedPictureFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.picture.mimeType ==
+        "image/png"
+    );
+
+    assert(
+        decoded.value.picture.pictureType ==
+        Id3v24PictureType.backCover
+    );
+
+    assert(
+        decoded.value.picture.description ==
+        "New"
+    );
+
+    assert(
+        decoded.value.picture.payloadKind ==
+        Id3v24PicturePayloadKind.binaryData
+    );
+
+    assert(!decoded.value.picture.linked);
+
+    assert(
+        decoded.value.picture.rawPictureData.data ==
+        [
+            0x89,
+            0x50,
+            0x4E,
+            0x47
+        ]
+    );
+}
+
+
+/// Newly appended embedded artwork survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        embeddedArtworkField(
+            "frontCover",
+            "Front",
+            "image/jpeg",
+            [
+                cast(ubyte) 0xFF,
+                cast(ubyte) 0xD8
+            ]
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                9000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * New APIC semantic payload:
+     *
+     *   03
+     *   "image/jpeg" 00
+     *   frontCover = 03
+     *   "Front" 00
+     *   FF D8
+     *
+     * = 21 bytes.
+     *
+     * APIC frame = 10 + 21 = 31 bytes.
+     * Complete tag body = 12 + 31 = 43 bytes.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        43
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "APIC"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24AttachedPictureFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.picture.mimeType ==
+        "image/jpeg"
+    );
+
+    assert(
+        decoded.value.picture.pictureType ==
+        Id3v24PictureType.frontCover
+    );
+
+    assert(
+        decoded.value.picture.description ==
+        "Front"
+    );
+
+    assert(
+        decoded.value.picture.payloadKind ==
+        Id3v24PicturePayloadKind.binaryData
+    );
+
+    assert(
+        decoded.value.picture.rawPictureData.data ==
+        [0xFF, 0xD8]
+    );
+}
+
+
+/// Newly appended linked artwork survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        linkedArtworkField(
+            "backCover",
+            "Cover",
+            "http://x"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                10000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * Linked APIC semantic payload:
+     *
+     *   03 "-->" 00
+     *   backCover = 04
+     *   "Cover" 00
+     *   "http://x"
+     *
+     * = 20 bytes.
+     *
+     * APIC frame = 30 bytes.
+     * Complete tag body = 42 bytes.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        42
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "APIC"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24AttachedPictureFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(decoded.value.picture.linked);
+
+    assert(
+        decoded.value.picture.mimeType ==
+        "-->"
+    );
+
+    assert(
+        decoded.value.picture.pictureType ==
+        Id3v24PictureType.backCover
+    );
+
+    assert(
+        decoded.value.picture.description ==
+        "Cover"
+    );
+
+    assert(
+        decoded.value.picture.payloadKind ==
+        Id3v24PicturePayloadKind.linkedUrl
+    );
+
+    assert(
+        decoded.value.picture.linkedUrl ==
+        "http://x"
     );
 }
 
