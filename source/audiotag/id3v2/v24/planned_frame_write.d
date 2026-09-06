@@ -9,7 +9,8 @@ Currently executable canonical target families:
 - ordinary text information (`T***`);
 - ordinary URL links (`W***`, excluding `WXXX`);
 - user-defined text (`TXXX`);
-- user-defined URL links (`WXXX`).
+- user-defined URL links (`WXXX`);
+- language text (`COMM`, `USLT`).
 
 Existing-frame regeneration retains the two explicit error domains used
 by the earlier text-only executor:
@@ -50,6 +51,10 @@ import audiotag.id3v2.v24.canonical_target :
 
 import audiotag.id3v2.v24.frame_write_plan :
     Id3v24FrameWriteAction;
+
+import audiotag.id3v2.v24.language_text_frame_write :
+    serializeNewId3v24LanguageTextFrame,
+    serializeRegeneratedId3v24LanguageTextFrame;
 
 import audiotag.id3v2.v24.new_frame_plan :
     Id3v24CanonicalFieldPlan,
@@ -172,9 +177,9 @@ planning before dispatching to a concrete family serializer:
 - the preserved source frame yields a writable structural regeneration
   format plan.
 
-Currently `textInformation`, `urlLink`, `userText` and `userUrl` are
-physically executable. Other semantically valid families return
-`unsupportedRepresentation`.
+Currently `textInformation`, `urlLink`, `userText`, `userUrl` and
+`languageText` are physically executable. Other semantically valid
+families return `unsupportedRepresentation`.
 
 Params:
     projection = Original provenance-preserving canonical projection.
@@ -457,6 +462,18 @@ serializeId3v24PlannedRegeneration(
             break;
         }
 
+        case Id3v24CanonicalTargetFamily
+            .languageText:
+        {
+            serialized =
+                serializeRegeneratedId3v24LanguageTextFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -490,8 +507,9 @@ Executes one planned newly introduced canonical frame.
 The function validates that the supplied semantic plan still refers to
 the same canonical edit field before selecting the concrete serializer.
 
-Currently `textInformation` and `urlLink` are physically executable.
-Other semantically valid families return `unsupportedRepresentation`.
+Currently `textInformation`, `urlLink`, `userText`, `userUrl` and
+`languageText` are physically executable. Other semantically valid
+families return `unsupportedRepresentation`.
 
 Params:
     edit = Canonical edit overlay used to construct `plan`.
@@ -640,6 +658,15 @@ serializeId3v24PlannedNewFrame(
             .userUrl:
             return
                 serializeNewId3v24UserUrlFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
+        case Id3v24CanonicalTargetFamily
+            .languageText:
+            return
+                serializeNewId3v24LanguageTextFrame(
                     newFields[
                         newFramePlan.newFieldIndex
                     ]
