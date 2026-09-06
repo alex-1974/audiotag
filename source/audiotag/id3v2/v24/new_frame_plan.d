@@ -325,6 +325,36 @@ hasNoAdditionalContext(
 
 
 private bool
+languageTextPayloadRepresentable(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    import audiotag.id3v2.v24.language_text_write :
+        measureId3v24Utf8LanguageTextPayload;
+
+    if (!field.hasLanguage)
+        return false;
+
+    return field.value.match!(
+        (const(MetadataText) text)
+        {
+            auto measured =
+                measureId3v24Utf8LanguageTextPayload(
+                    field.language.tag,
+                    field.description,
+                    text.value
+                );
+
+            return measured.hasValue;
+        },
+
+        _ => false
+    );
+}
+
+
+private bool
 languageIsNativeThreeByteCode(
     ref const(MetadataField) field
 )
@@ -560,11 +590,20 @@ planId3v24CanonicalField(
                 break;
             }
 
+            if (field.hasQualifiers)
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
             status =
-                field.hasQualifiers
-                ? Id3v24NewFramePlanStatus
-                    .unsupportedContext
-                : Id3v24CanonicalFieldPlanStatus.ready;
+                languageTextPayloadRepresentable(field)
+                ? Id3v24CanonicalFieldPlanStatus.ready
+                : Id3v24CanonicalFieldPlanStatus
+                    .nativeConstraintViolation;
 
             break;
         }
@@ -1755,4 +1794,69 @@ unittest
         );
 
     assert(plan.writable);
+}
+
+
+
+/// COMM planning consults the concrete UTF-8 language-text payload codec.
+unittest
+{
+    auto field =
+        textField(
+            "comment",
+            "a\0b"
+        );
+
+    field.language =
+        MetadataLanguage("eng");
+
+    field.description =
+        "short";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "COMM");
+}
+
+
+/// USLT planning uses the shared language-text payload codec.
+unittest
+{
+    auto field =
+        textField(
+            "lyrics",
+            "lyrics body"
+        );
+
+    field.language =
+        MetadataLanguage("eng");
+
+    field.description =
+        "verse\0one";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "USLT");
 }
