@@ -46,7 +46,7 @@ Planning outcome for one new canonical field.
 
 Only `ready` may proceed to a future serializer.
 +/
-enum Id3v24NewFramePlanStatus : ubyte
+enum Id3v24CanonicalFieldPlanStatus : ubyte
 {
     /// A deterministic, lossless native target is currently available.
     ready,
@@ -69,6 +69,43 @@ enum Id3v24NewFramePlanStatus : ubyte
 
 
 /++
+Compatibility name for the status used by new-frame planning.
+
+The status is fundamentally a property of one canonical field, not of
+whether that field is new or replaces source-derived metadata.
++/
+alias Id3v24NewFramePlanStatus =
+    Id3v24CanonicalFieldPlanStatus;
+
+
+/++
+Representability plan for one canonical field targeting ID3v2.4.
+
+This type is independent of whether the field is newly inserted or is a
+replacement for source-derived canonical metadata.
++/
+struct Id3v24CanonicalFieldPlan
+{
+    /// Planning outcome.
+    Id3v24CanonicalFieldPlanStatus status;
+
+    /// Deterministic native target when one was found.
+    Id3v24CanonicalTargetDefinition target;
+
+    /++
+    Returns whether the field may proceed to ID3v2.4 serialization.
+    +/
+    @property
+    bool writable() const
+        @safe pure nothrow @nogc
+    {
+        return status ==
+            Id3v24CanonicalFieldPlanStatus.ready;
+    }
+}
+
+
+/++
 Write plan for one newly introduced canonical field.
 
 `newFieldIndex` refers to its position in `MetadataTreeEdit.newFields`.
@@ -80,7 +117,7 @@ struct Id3v24NewFramePlan
     size_t newFieldIndex;
 
     /// Planning outcome.
-    Id3v24NewFramePlanStatus status;
+    Id3v24CanonicalFieldPlanStatus status;
 
     /// Native target when one was found.
     Id3v24CanonicalTargetDefinition target;
@@ -233,7 +270,7 @@ ufidLengthRepresentable(
 
 
 /++
-Plans one newly introduced canonical field for ID3v2.4 output.
+Plans one canonical field for lossless ID3v2.4 representation.
 
 The function is intentionally conservative. Context that cannot yet be
 encoded losslessly rejects planning rather than being silently dropped.
@@ -253,15 +290,13 @@ Rules by target family:
 - UFID identifier data must not exceed 64 bytes.
 
 Params:
-    newFieldIndex = Position in `MetadataTreeEdit.newFields`.
-    field = Newly introduced canonical field.
+    field = Canonical field to represent as ID3v2.4 metadata.
 
 Returns:
-    Explicit field-level new-frame plan.
+    Explicit canonical field representability plan.
 +/
-Id3v24NewFramePlan
-planId3v24NewCanonicalFrame(
-    size_t newFieldIndex,
+Id3v24CanonicalFieldPlan
+planId3v24CanonicalField(
     ref const(MetadataField) field
 )
     @safe
@@ -276,9 +311,8 @@ planId3v24NewCanonicalFrame(
     if (!lookup.found)
     {
         return
-            Id3v24NewFramePlan(
-                newFieldIndex,
-                Id3v24NewFramePlanStatus
+            Id3v24CanonicalFieldPlan(
+                Id3v24CanonicalFieldPlanStatus
                     .unsupportedCanonicalKey,
                 Id3v24CanonicalTargetDefinition.init
             );
@@ -293,15 +327,14 @@ planId3v24NewCanonicalFrame(
     )
     {
         return
-            Id3v24NewFramePlan(
-                newFieldIndex,
-                Id3v24NewFramePlanStatus
+            Id3v24CanonicalFieldPlan(
+                Id3v24CanonicalFieldPlanStatus
                     .invalidValueKind,
                 target
             );
     }
 
-    Id3v24NewFramePlanStatus status;
+    Id3v24CanonicalFieldPlanStatus status;
 
     final switch (target.family)
     {
@@ -310,7 +343,7 @@ planId3v24NewCanonicalFrame(
         {
             status =
                 hasNoAdditionalContext(field)
-                ? Id3v24NewFramePlanStatus.ready
+                ? Id3v24CanonicalFieldPlanStatus.ready
                 : Id3v24NewFramePlanStatus
                     .unsupportedContext;
 
@@ -332,7 +365,7 @@ planId3v24NewCanonicalFrame(
             else
             {
                 status =
-                    Id3v24NewFramePlanStatus.ready;
+                    Id3v24CanonicalFieldPlanStatus.ready;
             }
 
             break;
@@ -362,7 +395,7 @@ planId3v24NewCanonicalFrame(
                 field.hasQualifiers
                 ? Id3v24NewFramePlanStatus
                     .unsupportedContext
-                : Id3v24NewFramePlanStatus.ready;
+                : Id3v24CanonicalFieldPlanStatus.ready;
 
             break;
         }
@@ -412,7 +445,7 @@ planId3v24NewCanonicalFrame(
 
             status =
                 artworkSourceHasRequiredContext(field)
-                ? Id3v24NewFramePlanStatus.ready
+                ? Id3v24CanonicalFieldPlanStatus.ready
                 : Id3v24NewFramePlanStatus
                     .missingRequiredContext;
 
@@ -478,17 +511,50 @@ planId3v24NewCanonicalFrame(
             }
 
             status =
-                Id3v24NewFramePlanStatus.ready;
+                Id3v24CanonicalFieldPlanStatus.ready;
 
             break;
         }
     }
 
     return
-        Id3v24NewFramePlan(
-            newFieldIndex,
+        Id3v24CanonicalFieldPlan(
             status,
             target
+        );
+}
+
+
+/++
+Plans one newly introduced canonical field for ID3v2.4 output.
+
+This is the edit-overlay-specific wrapper around
+`planId3v24CanonicalField`.
+
+Params:
+    newFieldIndex = Position in `MetadataTreeEdit.newFields`.
+    field = Newly introduced canonical field.
+
+Returns:
+    New-frame plan retaining the edit-overlay index.
++/
+Id3v24NewFramePlan
+planId3v24NewCanonicalFrame(
+    size_t newFieldIndex,
+    ref const(MetadataField) field
+)
+    @safe
+{
+    const fieldPlan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    return
+        Id3v24NewFramePlan(
+            newFieldIndex,
+            fieldPlan.status,
+            fieldPlan.target
         );
 }
 
@@ -585,6 +651,58 @@ version (unittest)
 
         return field;
     }
+}
+
+
+/// Canonical representability can be checked without new-field context.
+unittest
+{
+    const field =
+        textField(
+            "title",
+            "Canonical title"
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus.ready
+    );
+
+    assert(plan.target.frameId == "TIT2");
+}
+
+
+/// Canonical replacement validation rejects unsupported context directly.
+unittest
+{
+    auto field =
+        textField(
+            "title",
+            "Canonical title"
+        );
+
+    field.description =
+        "cannot-be-stored-in-TIT2";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .unsupportedContext
+    );
 }
 
 
