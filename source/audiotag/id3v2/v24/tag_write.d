@@ -403,6 +403,9 @@ version (unittest)
     import audiotag.id3v2.v24.url_link :
         decodeId3v24UrlLinkFrame;
 
+    import audiotag.id3v2.v24.user_text :
+        decodeId3v24UserTextFrame;
+
     import audiotag.id3v2.v24.writer_policy :
         Id3v24WriteContext;
 
@@ -455,6 +458,25 @@ version (unittest)
                 MetadataKey(key),
                 wrapped
             );
+    }
+
+
+    private MetadataField userTextField(
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto result =
+            textField(
+                "userText",
+                value
+            );
+
+        result.description =
+            description;
+
+        return result;
     }
 
 
@@ -553,6 +575,49 @@ version (unittest)
                 urlField(
                     key,
                     url
+                )
+            )
+        );
+
+        return projection;
+    }
+}
+
+
+version (unittest)
+{
+    private Id3v24CanonicalProjection
+    projectionWithMappedUserText(
+        const(Id3v24TagStructure) source,
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto cursor =
+            source.frameCursor();
+
+        auto frame =
+            cursor.parseId3v24FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v24NativeFrame.init;
+
+        native.envelope =
+            frame.value;
+
+        auto projection =
+            Id3v24CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v24CanonicalMappingResult.success(
+                userTextField(
+                    description,
+                    value
                 )
             )
         );
@@ -1064,6 +1129,279 @@ unittest
     assert(
         decoded.value.link.url ==
         "https://example.test/"
+    );
+}
+
+
+/// Canonical TXXX replacement survives complete tag write and strict reparse.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One eighteen-byte TXXX frame.
+            0x00, 0x00, 0x00, 0x12,
+
+            'T', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            0x03,
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedUserText(
+            source,
+            "key",
+            "old"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        userTextField(
+            "new-key",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                5000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Regenerated TXXX semantic payload:
+     *
+     *   $03 + "new-key" + $00 + "new"
+     *
+     * = 12 bytes.
+     *
+     * Complete frame = 10 + 12 = 22-byte tag body.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        22
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "TXXX"
+    );
+
+    auto decoded =
+        frame.value.decodeId3v24UserTextFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.text.description ==
+        "new-key"
+    );
+
+    assert(
+        decoded.value.text.value ==
+        "new"
+    );
+}
+
+
+/// A newly appended TXXX survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        userTextField(
+            "MusicBrainz Album Id",
+            "abc-123"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                6000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * New TXXX payload:
+     *   $03
+     *   "MusicBrainz Album Id" = 20 bytes
+     *   $00
+     *   "abc-123" = 7 bytes
+     *
+     * Payload = 29, complete TXXX = 39.
+     * Total body = 12 + 39 = 51.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        51
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "TXXX"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24UserTextFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.text.description ==
+        "MusicBrainz Album Id"
+    );
+
+    assert(
+        decoded.value.text.value ==
+        "abc-123"
     );
 }
 
