@@ -189,9 +189,10 @@ planning before dispatching to a concrete family serializer:
 - the preserved source frame yields a writable structural regeneration
   format plan.
 
-Currently `textInformation`, `urlLink`, `userText`, `userUrl` and
-`languageText` are physically executable. Other semantically valid
-families return `unsupportedRepresentation`.
+All currently supported canonical target families are physically
+executable: `textInformation`, `urlLink`, `userText`, `userUrl`,
+`languageText`, `attachedPicture`, `privateData` and
+`uniqueFileIdentifier`.
 
 Params:
     projection = Original provenance-preserving canonical projection.
@@ -555,9 +556,10 @@ Executes one planned newly introduced canonical frame.
 The function validates that the supplied semantic plan still refers to
 the same canonical edit field before selecting the concrete serializer.
 
-Currently `textInformation`, `urlLink`, `userText`, `userUrl` and
-`languageText` are physically executable. Other semantically valid
-families return `unsupportedRepresentation`.
+All currently supported canonical target families are physically
+executable: `textInformation`, `urlLink`, `userText`, `userUrl`,
+`languageText`, `attachedPicture`, `privateData` and
+`uniqueFileIdentifier`.
 
 Params:
     edit = Canonical edit overlay used to construct `plan`.
