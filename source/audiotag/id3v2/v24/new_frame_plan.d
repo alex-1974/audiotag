@@ -47,6 +47,9 @@ import audiotag.id3v2.v24.user_url_write :
 import audiotag.id3v2.v24.url_link_write :
     measureId3v24UrlLinkPayload;
 
+import audiotag.id3v2.v24.attached_picture :
+    Id3v24PictureType;
+
 import audiotag.id3v2.v24.canonical_target :
     Id3v24CanonicalTargetDefinition,
     Id3v24CanonicalTargetFamily,
@@ -401,6 +404,53 @@ artworkSourceHasRequiredContext(
 
 
 private bool
+artworkPayloadRepresentable(
+    ref const(MetadataField) field,
+    Id3v24PictureType pictureType
+)
+    @safe
+{
+    import audiotag.id3v2.v24.attached_picture_write :
+        measureId3v24Utf8EmbeddedPicturePayload,
+        measureId3v24Utf8LinkedPicturePayload;
+
+    return field.value.match!(
+        (const(MetadataPicture) picture)
+        {
+            return picture.source.match!(
+                (const(MetadataBinary) binary)
+                {
+                    auto measured =
+                        measureId3v24Utf8EmbeddedPicturePayload(
+                            binary.mediaType,
+                            pictureType,
+                            picture.description,
+                            binary.data
+                        );
+
+                    return measured.hasValue;
+                },
+
+                (const(MetadataUrl) url)
+                {
+                    auto measured =
+                        measureId3v24Utf8LinkedPicturePayload(
+                            pictureType,
+                            picture.description,
+                            url.value
+                        );
+
+                    return measured.hasValue;
+                }
+            );
+        },
+
+        _ => false
+    );
+}
+
+
+private bool
 ufidLengthRepresentable(
     ref const(MetadataField) field
 )
@@ -427,10 +477,11 @@ Rules by target family:
 - TXXX/WXXX: description is permitted, language and qualifiers are not;
 - COMM/USLT: exactly one three-byte language code is required;
   description is permitted;
-- APIC: `pictureRole` is required as the sole field qualifier; the
-  field-level language/description contexts are unsupported because
-  APIC description belongs to `MetadataPicture`; embedded binary
-  artwork requires a media type;
+- APIC: exactly one known `pictureRole` is required as the sole field
+  qualifier; field-level language/description contexts are unsupported
+  because APIC description belongs to `MetadataPicture`; embedded
+  binary artwork requires a media type; both embedded and linked
+  payloads must satisfy the concrete APIC codec;
 - PRIV/UFID: `owner` is required as the sole qualifier; language and
   description are unsupported;
 - UFID identifier data must not exceed 64 bytes.
@@ -638,6 +689,7 @@ planId3v24CanonicalField(
             }
 
             if (
+                roleCount != 1 ||
                 !hasOnlyQualifier(
                     field,
                     "pictureRole"
@@ -651,11 +703,40 @@ planId3v24CanonicalField(
                 break;
             }
 
+            import audiotag.id3v2.v24.picture_role :
+                findId3v24PictureRole;
+
+            const role =
+                findId3v24PictureRole(
+                    field.qualifiers[0].value
+                );
+
+            if (!role.found)
+            {
+                status =
+                    Id3v24CanonicalFieldPlanStatus
+                        .nativeConstraintViolation;
+
+                break;
+            }
+
+            if (!artworkSourceHasRequiredContext(field))
+            {
+                status =
+                    Id3v24NewFramePlanStatus
+                        .missingRequiredContext;
+
+                break;
+            }
+
             status =
-                artworkSourceHasRequiredContext(field)
+                artworkPayloadRepresentable(
+                    field,
+                    role.definition.pictureType
+                )
                 ? Id3v24CanonicalFieldPlanStatus.ready
-                : Id3v24NewFramePlanStatus
-                    .missingRequiredContext;
+                : Id3v24CanonicalFieldPlanStatus
+                    .nativeConstraintViolation;
 
             break;
         }
@@ -1796,6 +1877,198 @@ unittest
     assert(plan.writable);
 }
 
+
+
+/// APIC planning rejects an unknown canonical picture role.
+unittest
+{
+    MetadataPictureSource source =
+        MetadataBinary.copyFrom(
+            [
+                cast(ubyte) 0xFF,
+                cast(ubyte) 0xD8
+            ],
+            "image/jpeg"
+        );
+
+    MetadataValue value =
+        MetadataPicture(
+            "Cover",
+            source
+        );
+
+    const field =
+        MetadataField(
+            MetadataKey("artwork"),
+            value,
+            [],
+            MetadataLanguage.init,
+            "",
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    "futurePictureRole"
+                )
+            ]
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "APIC");
+}
+
+
+/// APIC requires exactly one picture-role qualifier.
+unittest
+{
+    MetadataPictureSource source =
+        MetadataBinary.copyFrom(
+            [cast(ubyte) 0xFF],
+            "image/jpeg"
+        );
+
+    MetadataValue value =
+        MetadataPicture(
+            "Cover",
+            source
+        );
+
+    const field =
+        MetadataField(
+            MetadataKey("artwork"),
+            value,
+            [],
+            MetadataLanguage.init,
+            "",
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    "frontCover"
+                ),
+                MetadataQualifier(
+                    "pictureRole",
+                    "backCover"
+                )
+            ]
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .unsupportedContext
+    );
+}
+
+
+/// APIC planning consults the concrete embedded-picture payload codec.
+unittest
+{
+    MetadataPictureSource source =
+        MetadataBinary.copyFrom(
+            [cast(ubyte) 0xFF],
+            "image/jpeg"
+        );
+
+    MetadataValue value =
+        MetadataPicture(
+            "Front\0cover",
+            source
+        );
+
+    const field =
+        MetadataField(
+            MetadataKey("artwork"),
+            value,
+            [],
+            MetadataLanguage.init,
+            "",
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    "frontCover"
+                )
+            ]
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "APIC");
+}
+
+
+/// APIC planning consults the concrete linked-picture payload codec.
+unittest
+{
+    MetadataPictureSource source =
+        MetadataUrl(
+            "https://example.test/€"
+        );
+
+    MetadataValue value =
+        MetadataPicture(
+            "Cover",
+            source
+        );
+
+    const field =
+        MetadataField(
+            MetadataKey("artwork"),
+            value,
+            [],
+            MetadataLanguage.init,
+            "",
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    "frontCover"
+                )
+            ]
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "APIC");
+}
 
 
 /// COMM planning consults the concrete UTF-8 language-text payload codec.
