@@ -492,19 +492,44 @@ privatePayloadRepresentable(
 
 
 private bool
-ufidLengthRepresentable(
+ufidPayloadRepresentable(
     ref const(MetadataField) field
 )
     @safe
 {
+    import audiotag.id3v2.v24.unique_file_identifier_write :
+        measureId3v24UniqueFileIdentifierPayload;
+
+    if (
+        field.qualifiers.length != 1 ||
+        field.qualifiers[0].name != "owner"
+    )
+    {
+        return false;
+    }
+
     return field.value.match!(
-        (const(MetadataBinary) binary) =>
-            binary.length <= 64,
+        (const(MetadataBinary) binary)
+        {
+            /*
+             * UFID has no native media-type field. Accepting one would
+             * silently discard canonical information.
+             */
+            if (binary.mediaType.length != 0)
+                return false;
+
+            auto measured =
+                measureId3v24UniqueFileIdentifierPayload(
+                    field.qualifiers[0].value,
+                    binary.data
+                );
+
+            return measured.hasValue;
+        },
 
         _ => false
     );
 }
-
 
 /++
 Plans one canonical field for lossless ID3v2.4 representation.
@@ -523,9 +548,11 @@ Rules by target family:
   because APIC description belongs to `MetadataPicture`; embedded
   binary artwork requires a media type; both embedded and linked
   payloads must satisfy the concrete APIC codec;
-- PRIV/UFID: `owner` is required as the sole qualifier; language and
-  description are unsupported;
-- UFID identifier data must not exceed 64 bytes.
+- PRIV/UFID: exactly one `owner` is required as the sole qualifier;
+  language and description are unsupported;
+- UFID owner identifiers must satisfy the concrete native owner codec,
+  identifier data must not exceed 64 bytes, and binary media type
+  context is unsupported because UFID has no native media-type field.
 
 Params:
     field = Canonical field to represent as ID3v2.4 metadata.
@@ -858,11 +885,25 @@ planId3v24CanonicalField(
                 target.family ==
                     Id3v24CanonicalTargetFamily
                         .uniqueFileIdentifier &&
-                !ufidLengthRepresentable(field)
+                ownerCount != 1
             )
             {
                 status =
                     Id3v24NewFramePlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            if (
+                target.family ==
+                    Id3v24CanonicalTargetFamily
+                        .uniqueFileIdentifier &&
+                !ufidPayloadRepresentable(field)
+            )
+            {
+                status =
+                    Id3v24CanonicalFieldPlanStatus
                         .nativeConstraintViolation;
 
                 break;
@@ -1945,6 +1986,189 @@ unittest
         Id3v24NewFramePlanStatus
             .unsupportedContext
     );
+}
+
+
+/// UFID requires a non-empty owner identifier.
+unittest
+{
+    const field =
+        binaryField(
+            "uniqueFileIdentifier",
+            [cast(ubyte) 0x01],
+            "owner",
+            ""
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "UFID");
+}
+
+
+/// UFID owner must be representable as native ISO-8859-1.
+unittest
+{
+    const field =
+        binaryField(
+            "uniqueFileIdentifier",
+            [cast(ubyte) 0x01],
+            "owner",
+            "owner/\u20AC"
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Embedded NUL cannot silently truncate a planned UFID owner.
+unittest
+{
+    const field =
+        binaryField(
+            "uniqueFileIdentifier",
+            [cast(ubyte) 0x01],
+            "owner",
+            "owner\0suffix"
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Duplicate UFID owner qualifiers are unsupported canonical context.
+unittest
+{
+    auto field =
+        binaryField(
+            "uniqueFileIdentifier",
+            [cast(ubyte) 0x01]
+        );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "one"
+            ),
+            MetadataQualifier(
+                "owner",
+                "two"
+            )
+        ];
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .unsupportedContext
+    );
+}
+
+
+/// UFID cannot silently discard canonical binary media-type context.
+unittest
+{
+    MetadataValue wrapped =
+        MetadataBinary.copyFrom(
+            [cast(ubyte) 0x01],
+            "application/octet-stream"
+        );
+
+    auto field =
+        MetadataField(
+            MetadataKey(
+                "uniqueFileIdentifier"
+            ),
+            wrapped
+        );
+
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "example.invalid"
+            )
+        ];
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24NewFramePlanStatus
+            .nativeConstraintViolation
+    );
+}
+
+
+/// Empty UFID identifier data remains natively representable.
+unittest
+{
+    const field =
+        binaryField(
+            "uniqueFileIdentifier",
+            [],
+            "owner",
+            "example.invalid"
+        );
+
+    const plan =
+        planId3v24NewCanonicalFrame(
+            0,
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "UFID");
 }
 
 
