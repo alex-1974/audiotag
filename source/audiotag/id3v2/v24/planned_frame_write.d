@@ -50,6 +50,10 @@ import audiotag.id3v2.v24.private_frame_write :
     serializeNewId3v24PrivateFrame,
     serializeRegeneratedId3v24PrivateFrame;
 
+import audiotag.id3v2.v24.unique_file_identifier_frame_write :
+    serializeNewId3v24UniqueFileIdentifierFrame,
+    serializeRegeneratedId3v24UniqueFileIdentifierFrame;
+
 import audiotag.id3v2.v24.canonical_projection :
     Id3v24CanonicalProjection;
 
@@ -506,6 +510,18 @@ serializeId3v24PlannedRegeneration(
             break;
         }
 
+        case Id3v24CanonicalTargetFamily
+            .uniqueFileIdentifier:
+        {
+            serialized =
+                serializeRegeneratedId3v24UniqueFileIdentifierFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -717,6 +733,15 @@ serializeId3v24PlannedNewFrame(
             .privateData:
             return
                 serializeNewId3v24PrivateFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
+        case Id3v24CanonicalTargetFamily
+            .uniqueFileIdentifier:
+            return
+                serializeNewId3v24UniqueFileIdentifierFrame(
                     newFields[
                         newFramePlan.newFieldIndex
                     ]
