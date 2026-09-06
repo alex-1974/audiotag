@@ -38,6 +38,9 @@ import audiotag.metadata.value :
 import audiotag.id3v2.v24.text_information_write :
     measureId3v24Utf8TextInformationPayload;
 
+import audiotag.id3v2.v24.user_text_write :
+    measureId3v24Utf8UserTextPayload;
+
 import audiotag.id3v2.v24.url_link_write :
     measureId3v24UrlLinkPayload;
 
@@ -203,6 +206,29 @@ textInformationPayloadRepresentable(
     );
 }
 
+
+
+private bool
+userTextPayloadRepresentable(
+    ref const(MetadataField) field
+)
+    @safe
+{
+    return field.value.match!(
+        (const(MetadataText) text)
+        {
+            auto measured =
+                measureId3v24Utf8UserTextPayload(
+                    field.description,
+                    text.value
+                );
+
+            return measured.hasValue;
+        },
+
+        _ => false
+    );
+}
 
 
 private bool
@@ -443,6 +469,28 @@ planId3v24CanonicalField(
         }
 
         case Id3v24CanonicalTargetFamily.userText:
+        {
+            if (
+                field.hasLanguage ||
+                field.hasQualifiers
+            )
+            {
+                status =
+                    Id3v24CanonicalFieldPlanStatus
+                        .unsupportedContext;
+
+                break;
+            }
+
+            status =
+                userTextPayloadRepresentable(field)
+                ? Id3v24CanonicalFieldPlanStatus.ready
+                : Id3v24CanonicalFieldPlanStatus
+                    .nativeConstraintViolation;
+
+            break;
+        }
+
         case Id3v24CanonicalTargetFamily.userUrl:
         {
             if (
@@ -1077,6 +1125,141 @@ unittest
         plan.status ==
         Id3v24NewFramePlanStatus
             .invalidValueKind
+    );
+}
+
+
+/// TXXX planning consults the concrete UTF-8 payload codec.
+unittest
+{
+    auto field =
+        textField(
+            "userText",
+            "abc-123"
+        );
+
+    field.description =
+        "MusicBrainz Album Id";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus.ready
+    );
+
+    assert(plan.target.frameId == "TXXX");
+}
+
+
+/// TXXX remains writable when its canonical description is unspecified.
+unittest
+{
+    const field =
+        textField(
+            "userText",
+            "value"
+        );
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(plan.writable);
+    assert(plan.target.frameId == "TXXX");
+}
+
+
+/// Embedded NUL in a TXXX scalar value has no supported canonical encoding.
+unittest
+{
+    auto field =
+        textField(
+            "userText",
+            "a\0b"
+        );
+
+    field.description =
+        "key";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "TXXX");
+}
+
+
+/// Embedded NUL cannot silently terminate a TXXX description early.
+unittest
+{
+    auto field =
+        textField(
+            "userText",
+            "value"
+        );
+
+    field.description =
+        "a\0b";
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .nativeConstraintViolation
+    );
+
+    assert(plan.target.frameId == "TXXX");
+}
+
+
+/// Unsupported TXXX context takes precedence over payload encoding failure.
+unittest
+{
+    auto field =
+        textField(
+            "userText",
+            "a\0b"
+        );
+
+    field.description =
+        "key";
+
+    field.language =
+        MetadataLanguage("eng");
+
+    const plan =
+        planId3v24CanonicalField(
+            field
+        );
+
+    assert(!plan.writable);
+
+    assert(
+        plan.status ==
+        Id3v24CanonicalFieldPlanStatus
+            .unsupportedContext
     );
 }
 
