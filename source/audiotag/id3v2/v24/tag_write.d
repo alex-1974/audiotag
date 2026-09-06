@@ -519,6 +519,8 @@ version (unittest)
 }
 
 
+version (unittest)
+{
     private Id3v24CanonicalProjection
     projectionWithMappedUrl(
         const(Id3v24TagStructure) source,
@@ -557,6 +559,7 @@ version (unittest)
 
         return projection;
     }
+}
 
 
 /// Canonical replacement produces a complete strict-readable ID3v2.4 tag.
