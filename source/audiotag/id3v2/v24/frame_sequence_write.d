@@ -5,12 +5,12 @@ This module is the first layer that executes all existing-frame actions
 of `Id3v24TagWritePlan` together:
 
 - `preserveOriginal` copies the unchanged native frame representation;
-- `regenerate` executes the planned ordinary text-frame regeneration;
+- `regenerate` executes the planned canonical frame regeneration;
 - `discard` emits no bytes;
 - `rejectWrite` blocks serialization.
 
 After all surviving existing frames have been emitted in original native
-order, newly introduced ordinary text-information frames are appended in
+order, newly introduced supported canonical frames are appended in
 `Id3v24TagWritePlan.newFrames` order.
 
 The current assembler deliberately supports only source tags without
@@ -19,7 +19,7 @@ tag-level unsynchronisation.
 Why:
 
 - preserved frames retain their original physical frame-data bytes;
-- regenerated and new frames currently emit ordinary non-tag-unsynchronised
+- regenerated and new frames currently emit normal non-tag-unsynchronised
   bytes;
 - mixing those representations under one future tag-level
   unsynchronisation flag would be ambiguous until whole-tag
@@ -54,11 +54,9 @@ import audiotag.id3v2.v24.frame_preserve_write :
 import audiotag.id3v2.v24.frame_write_plan :
     Id3v24FrameWriteAction;
 
-import audiotag.id3v2.v24.planned_new_text_write :
-    serializeId3v24PlannedNewTextFrame;
-
-import audiotag.id3v2.v24.planned_text_write :
-    serializeId3v24PlannedTextRegeneration;
+import audiotag.id3v2.v24.planned_frame_write :
+    serializeId3v24PlannedNewFrame,
+    serializeId3v24PlannedRegeneration;
 
 import audiotag.id3v2.v24.tag_write_plan :
     Id3v24TagWritePlan;
@@ -314,7 +312,7 @@ serializeId3v24PlannedFrameSequence(
                 }
 
                 auto executed =
-                    serializeId3v24PlannedTextRegeneration(
+                    serializeId3v24PlannedRegeneration(
                         projection,
                         edit,
                         plan,
@@ -388,7 +386,7 @@ serializeId3v24PlannedFrameSequence(
     )
     {
         auto serialized =
-            serializeId3v24PlannedNewTextFrame(
+            serializeId3v24PlannedNewFrame(
                 edit,
                 plan,
                 newFramePlanIndex
@@ -935,7 +933,7 @@ unittest
 }
 
 
-/// Semantically valid non-text new frames await their physical codec.
+/// Planned ordinary URL frames are appended through the generic dispatcher.
 unittest
 {
     const projection =
@@ -974,12 +972,30 @@ unittest
     auto serialized =
         assembled.value;
 
-    assert(serialized.hasError);
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[]
+            )
+        );
+
+    auto frame =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
 
     assert(
-        serialized.error.code ==
-        SerializationErrorCode
-            .unsupportedRepresentation
+        frame.value.header.id[] ==
+        "WCOM"
+    );
+
+    assert(
+        frame.value.data.data ==
+        cast(const(ubyte)[])
+            "https://example.test/"
     );
 }
 
