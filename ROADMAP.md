@@ -192,23 +192,26 @@ Still pending:
 
 ## Phase 5 — ID3 writer
 
-Status: **next implementation phase**.
+Status: complete for the currently targeted ID3v2.4 codec scope.
 
-Begin with an explicit preservation and mutation policy before byte
-serialization.
+Implemented:
 
-Implement:
-
-- policy for unchanged, modified, unsupported,
-  transformation-pending and unrepresentable native frames;
-- handling of ID3 frame preservation and read-only flags;
-- ID3v2.4 frame serialization;
-- ID3v2.4 tag serialization;
-- extended-header / CRC policy;
-- unsynchronisation policy;
+- ID3v2.4 serialization;
+- stable roundtrip;
+- unknown-frame preservation policy;
 - padding strategy;
-- separation of metadata serialization from enclosing-file updating;
-- stable parse → write → parse roundtrip tests.
+- parse → write → parse tests;
+- canonical writer support for T***, W***, TXXX, WXXX, COMM, USLT,
+  APIC, PRIV and UFID.
+
+Deliberately deferred beyond this phase:
+
+- whole-tag unsynchronisation writing;
+- extended-header CRC regeneration;
+- changed-tag restriction handling beyond conservative rejection;
+- compression regeneration;
+- encryption regeneration;
+- MPEG/MP3 container update strategy.
 
 ## Phase 6 — ID3 version family
 

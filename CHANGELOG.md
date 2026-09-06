@@ -14,6 +14,13 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Planned test and regression-corpus structure.
 - Bounded zero-copy `ByteSpan` implementation in the new parser core.
 - Unit tests for `ByteSpan` construction, empty spans, subspans, nested offsets, zero-length subspans and zero-copy behavior.
+- Stateful bounded `ByteCursor`, numeric helpers and structured parse errors.
+- Strict bounded ID3v2.4 structural parsing including extended headers, frames, padding and footer handling.
+- Semantic ID3v2.4 readers and canonical mappings for T***, W***, TXXX, WXXX, COMM, USLT, APIC, PRIV and UFID.
+- Provenance-aware canonical metadata tree and edit overlay.
+- ID3v2.4 writer planning with preservation, regeneration, discard and reject actions.
+- Complete ID3v2.4 tag serialization with source-order preservation and padding policy.
+- Deterministic ID3v2.4 writers and complete tag roundtrip coverage for T***, W***, TXXX, WXXX, COMM, USLT, APIC, PRIV and UFID.
 
 ### Changed
 

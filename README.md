@@ -31,26 +31,30 @@ The current phase is **not** trying to:
 
 ## Current state
 
-The repository began as an experimental ID3 proof of concept. That legacy code remains isolated while the active implementation is developed under the new bounded-parser architecture.
+The repository began as an experimental ID3 proof of concept. That
+legacy code remains isolated while the new architecture is developed
+independently.
 
 The active implementation now includes:
 
-- a format-independent binary core based on `ByteSpan`, `ByteCursor`, structured `ParseResult` / `ParseError`, bounded pattern operations and endian/synchsafe integer readers;
-- a strict, bounded ID3v2.4 structural parser for tag headers, extended headers, frames, padding, footers and frame-data prefixes;
-- ID3v2.4 byte-unsynchronisation handling with physical source-offset provenance;
-- robust ISO-8859-1, UTF-8, UTF-16 with BOM and UTF-16BE text decoding;
-- native/provenance-aware semantic codecs for `T***`, `TXXX`, `W***`, `WXXX`, `COMM`, `USLT`, `APIC`, `PRIV` and `UFID`;
-- preservation of physical raw spans alongside decoded values;
-- explicit transformation-pending outcomes for structurally valid compressed or encrypted frame payloads that cannot yet be decoded;
-- a typed, ordered and provenance-aware canonical metadata tree and field registry;
-- canonical mappings for the currently implemented ID3v2.4 semantic frame families;
-- a central native-frame → canonical dispatcher;
-- provenance-preserving canonical projection that retains every native frame and its original ordering;
-- a transactional whole-tag ID3v2.4 read path exposing both the complete validated native structure and its canonical metadata view.
+- bounded zero-copy `ByteSpan` and stateful `ByteCursor` primitives;
+- structured parse and serialization errors;
+- strict bounded ID3v2.4 tag and frame parsing;
+- native/provenance-aware ID3v2.4 semantic frame decoding;
+- an order-preserving canonical metadata tree and edit overlay;
+- deterministic canonical-to-ID3v2.4 planning;
+- complete ID3v2.4 tag serialization for the currently targeted frame
+  families;
+- parse → write → parse tests for T***, W***, TXXX, WXXX, COMM, USLT,
+  APIC, PRIV and UFID;
+- preservation, regeneration, discard/reject and padding policies.
 
-The current implementation boundary is the canonical ID3v2.4 reader. ID3 writing, tolerant/recovery diagnostics, broader frame coverage, additional metadata systems and a stable public API remain later roadmap work.
+The ID3v2.4 tag codec does not yet constitute an MPEG/MP3 container
+writer: inserting or resizing the resulting tag inside an audio file is
+a separate layer.
 
-Known legacy issues are intentionally being left isolated rather than fixed opportunistically during the new implementation.
+Known legacy issues remain intentionally isolated rather than being
+fixed opportunistically during the core rewrite.
 
 ## Core design
 
