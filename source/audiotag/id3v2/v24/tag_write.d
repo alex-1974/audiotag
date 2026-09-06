@@ -395,6 +395,9 @@ version (unittest)
         Id3v24PictureType,
         decodeId3v24AttachedPictureFrame;
 
+    import audiotag.id3v2.v24.private_frame :
+        decodeId3v24PrivateFrame;
+
     import audiotag.id3v2.v24.comment :
         decodeId3v24CommentFrame;
 
@@ -609,6 +612,36 @@ version (unittest)
                 MetadataQualifier(
                     "pictureRole",
                     role
+                )
+            ];
+
+        return result;
+    }
+
+
+    private MetadataField
+    privateDataField(
+        string owner,
+        const(ubyte)[] data
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataBinary.copyFrom(
+                data
+            );
+
+        auto result =
+            MetadataField(
+                MetadataKey("privateData"),
+                wrapped
+            );
+
+        result.qualifiers =
+            [
+                MetadataQualifier(
+                    "owner",
+                    owner
                 )
             ];
 
@@ -890,6 +923,49 @@ version (unittest)
                     role,
                     description,
                     mimeType,
+                    data
+                )
+            )
+        );
+
+        return projection;
+    }
+}
+
+
+version (unittest)
+{
+    private Id3v24CanonicalProjection
+    projectionWithMappedPrivateData(
+        const(Id3v24TagStructure) source,
+        string owner,
+        const(ubyte)[] data
+    )
+        @safe
+    {
+        auto cursor =
+            source.frameCursor();
+
+        auto frame =
+            cursor.parseId3v24FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v24NativeFrame.init;
+
+        native.envelope =
+            frame.value;
+
+        auto projection =
+            Id3v24CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v24CanonicalMappingResult.success(
+                privateDataField(
+                    owner,
                     data
                 )
             )
@@ -3042,6 +3118,305 @@ unittest
     assert(
         decoded.value.picture.linkedUrl ==
         "http://x"
+    );
+}
+
+
+/// Canonical private-data replacement survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // Complete tag body = one 24-byte PRIV frame.
+            0x00, 0x00, 0x00, 0x18,
+
+            'P', 'R', 'I', 'V',
+            0x00, 0x00, 0x00, 0x0E,
+            0x00, 0x00,
+
+            'o', 'l', 'd', '.',
+            'e', 'x', 'a', 'm', 'p', 'l', 'e',
+            0x00,
+
+            0x01, 0x02
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedPrivateData(
+            source,
+            "old.example",
+            [
+                cast(ubyte) 0x01,
+                cast(ubyte) 0x02
+            ]
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        privateDataField(
+            "new.example",
+            [
+                cast(ubyte) 0xAA,
+                cast(ubyte) 0x00,
+                cast(ubyte) 0xFF
+            ]
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                11000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 1);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Regenerated semantic PRIV payload:
+     *
+     *   "new.example" 00 AA 00 FF
+     *
+     * owner = 11 bytes
+     * terminator = 1 byte
+     * private data = 3 bytes
+     *
+     * payload = 15 bytes
+     * frame   = 10 + 15 = 25 bytes
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        25
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto frame =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frames.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "PRIV"
+    );
+
+    auto decoded =
+        frame.value.decodeId3v24PrivateFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.privateFrame.ownerIdentifier ==
+        "new.example"
+    );
+
+    assert(
+        decoded.value.privateFrame.rawPrivateData.data ==
+        [
+            0xAA,
+            0x00,
+            0xFF
+        ]
+    );
+}
+
+
+/// Newly appended private data survives the complete tag writer path.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+
+            // One twelve-byte TIT2 frame.
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x03, 'X'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    const projection =
+        projectionWithMappedTitle(
+            source,
+            "X"
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        privateDataField(
+            "example.com",
+            [
+                cast(ubyte) 0x01,
+                cast(ubyte) 0x00,
+                cast(ubyte) 0xFE,
+                cast(ubyte) 0xFF
+            ]
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto written =
+        serializeId3v24PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+
+    auto serialized =
+        written.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                serialized.value[],
+                12000
+            )
+        );
+
+    auto reparsed =
+        cursor.parseId3v24TagStructure();
+
+    assert(reparsed.hasValue);
+    assert(cursor.empty);
+
+    assert(reparsed.value.frameCount == 2);
+    assert(reparsed.value.frames.padding.empty);
+
+    /*
+     * Existing TIT2 = 12 bytes.
+     *
+     * New PRIV semantic payload:
+     *
+     *   "example.com" 00 01 00 FE FF
+     *
+     * = 16 bytes.
+     *
+     * Complete PRIV frame = 10 + 16 = 26 bytes.
+     *
+     * Complete tag body = 12 + 26 = 38 bytes.
+     */
+    assert(
+        reparsed.value.envelope.header.tagSize ==
+        38
+    );
+
+    auto frames =
+        reparsed.value.frameCursor();
+
+    auto first =
+        frames.parseId3v24FrameEnvelope();
+
+    auto second =
+        frames.parseId3v24FrameEnvelope();
+
+    assert(first.hasValue);
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    assert(
+        first.value.header.id[] ==
+        "TIT2"
+    );
+
+    assert(
+        second.value.header.id[] ==
+        "PRIV"
+    );
+
+    auto decoded =
+        second.value.decodeId3v24PrivateFrame();
+
+    assert(decoded.hasValue);
+    assert(decoded.value.decoded);
+
+    assert(
+        decoded.value.privateFrame.ownerIdentifier ==
+        "example.com"
+    );
+
+    assert(
+        decoded.value.privateFrame.rawPrivateData.data ==
+        [
+            0x01,
+            0x00,
+            0xFE,
+            0xFF
+        ]
     );
 }
 
