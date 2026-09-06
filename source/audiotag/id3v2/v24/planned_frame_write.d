@@ -7,7 +7,9 @@ planning and concrete native frame serializers.
 Currently executable canonical target families:
 
 - ordinary text information (`T***`);
-- ordinary URL links (`W***`, excluding `WXXX`).
+- ordinary URL links (`W***`, excluding `WXXX`);
+- user-defined text (`TXXX`);
+- user-defined URL links (`WXXX`).
 
 Existing-frame regeneration retains the two explicit error domains used
 by the earlier text-only executor:
@@ -70,6 +72,10 @@ import audiotag.id3v2.v24.url_link_frame_write :
 import audiotag.id3v2.v24.user_text_frame_write :
     serializeNewId3v24UserTextFrame,
     serializeRegeneratedId3v24UserTextFrame;
+
+import audiotag.id3v2.v24.user_url_frame_write :
+    serializeNewId3v24UserUrlFrame,
+    serializeRegeneratedId3v24UserUrlFrame;
 
 
 /++
@@ -166,8 +172,9 @@ planning before dispatching to a concrete family serializer:
 - the preserved source frame yields a writable structural regeneration
   format plan.
 
-Currently `textInformation` and `urlLink` are physically executable.
-Other semantically valid families return `unsupportedRepresentation`.
+Currently `textInformation`, `urlLink`, `userText` and `userUrl` are
+physically executable. Other semantically valid families return
+`unsupportedRepresentation`.
 
 Params:
     projection = Original provenance-preserving canonical projection.
@@ -438,6 +445,18 @@ serializeId3v24PlannedRegeneration(
             break;
         }
 
+        case Id3v24CanonicalTargetFamily
+            .userUrl:
+        {
+            serialized =
+                serializeRegeneratedId3v24UserUrlFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -617,6 +636,15 @@ serializeId3v24PlannedNewFrame(
                     ]
                 );
 
+        case Id3v24CanonicalTargetFamily
+            .userUrl:
+            return
+                serializeNewId3v24UserUrlFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
         default:
             return
                 SerializationResult!(ubyte[])
@@ -710,6 +738,25 @@ version (unittest)
             textField(
                 "userText",
                 value
+            );
+
+        result.description =
+            description;
+
+        return result;
+    }
+
+
+    private MetadataField userUrlField(
+        string description,
+        string url
+    )
+        @safe
+    {
+        auto result =
+            urlField(
+                "userUrl",
+                url
             );
 
         result.description =
@@ -1028,6 +1075,163 @@ unittest
     assert(
         frame.value.data.data ==
         cast(const(ubyte)[]) "new"
+    );
+}
+
+
+/// A planned new WXXX frame dispatches through the user-URL serializer.
+unittest
+{
+    const projection =
+        Id3v24CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        userUrlField(
+            "homepage",
+            "https://example.test/"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v24PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(serialized.value[])
+        );
+
+    auto frame =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "WXXX"
+    );
+
+    assert(
+        frame.value.data.data ==
+        [
+            0x03,
+            'h', 'o', 'm', 'e', 'p', 'a', 'g', 'e',
+            0x00,
+            'h', 't', 't', 'p', 's', ':', '/', '/',
+            'e', 'x', 'a', 'm', 'p', 'l', 'e',
+            '.', 't', 'e', 's', 't', '/'
+        ]
+    );
+}
+
+
+/// A modified mapped WXXX frame dispatches to user-URL regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'W', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            0x03,
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            userUrlField(
+                "key",
+                "old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        userUrlField(
+            "new-key",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v24CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v24WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v24PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+
+    auto serialized =
+        executed.value;
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(serialized.value[])
+        );
+
+    auto frame =
+        cursor.parseId3v24FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "WXXX"
+    );
+
+    assert(
+        frame.value.data.data ==
+        [
+            0x03,
+            'n', 'e', 'w', '-', 'k', 'e', 'y',
+            0x00,
+            'n', 'e', 'w'
+        ]
     );
 }
 
