@@ -40,6 +40,9 @@ import audiotag.id3v2.v23.data_cursor :
 import audiotag.id3v2.v23.native_frame :
     Id3v23NativeFrame;
 
+import audiotag.id3v2.v23.picture_role :
+    findId3v23PictureRole;
+
 import audiotag.metadata.field :
     MetadataField,
     MetadataKey,
@@ -114,13 +117,26 @@ mapId3v23AttachedPictureFrameToCanonical(
         );
 
 
+    const pictureRole =
+        findId3v23PictureRole(
+            frame.pictureType
+        );
+
+
+    /*
+     * The native APIC decoder has already restricted picture type to
+     * the defined ID3v2.3 range.
+     */
+    assert(
+        pictureRole.found
+    );
+
+
     field.qualifiers =
         [
             MetadataQualifier(
                 "pictureRole",
-                pictureRoleName(
-                    frame.pictureType
-                )
+                pictureRole.definition.name
             )
         ];
 
@@ -264,85 +280,6 @@ private MetadataBinary makeEmbeddedPictureBinary(
             logical,
             frame.mimeType
         );
-}
-
-
-/++
-Returns the stable canonical role name for one validated ID3v2.3
-picture type.
-+/
-private string pictureRoleName(
-    Id3v23PictureType pictureType
-)
-    @safe pure nothrow @nogc
-{
-    final switch (
-        pictureType
-    )
-    {
-        case Id3v23PictureType.other:
-            return "other";
-
-        case Id3v23PictureType.fileIcon:
-            return "fileIcon";
-
-        case Id3v23PictureType.otherFileIcon:
-            return "otherFileIcon";
-
-        case Id3v23PictureType.frontCover:
-            return "frontCover";
-
-        case Id3v23PictureType.backCover:
-            return "backCover";
-
-        case Id3v23PictureType.leafletPage:
-            return "leafletPage";
-
-        case Id3v23PictureType.media:
-            return "media";
-
-        case Id3v23PictureType.leadArtist:
-            return "leadArtist";
-
-        case Id3v23PictureType.artist:
-            return "artist";
-
-        case Id3v23PictureType.conductor:
-            return "conductor";
-
-        case Id3v23PictureType.band:
-            return "band";
-
-        case Id3v23PictureType.composer:
-            return "composer";
-
-        case Id3v23PictureType.lyricist:
-            return "lyricist";
-
-        case Id3v23PictureType.recordingLocation:
-            return "recordingLocation";
-
-        case Id3v23PictureType.duringRecording:
-            return "duringRecording";
-
-        case Id3v23PictureType.duringPerformance:
-            return "duringPerformance";
-
-        case Id3v23PictureType.videoCapture:
-            return "videoCapture";
-
-        case Id3v23PictureType.brightColouredFish:
-            return "brightColouredFish";
-
-        case Id3v23PictureType.illustration:
-            return "illustration";
-
-        case Id3v23PictureType.artistLogotype:
-            return "artistLogotype";
-
-        case Id3v23PictureType.publisherLogotype:
-            return "publisherLogotype";
-    }
 }
 
 
@@ -699,10 +636,19 @@ unittest
         cases
     )
     {
-        assert(
-            pictureRoleName(
+        const role =
+            findId3v23PictureRole(
                 entry.type
-            ) ==
+            );
+
+
+        assert(
+            role.found
+        );
+
+
+        assert(
+            role.definition.name ==
             entry.name
         );
     }
