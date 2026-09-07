@@ -1,16 +1,20 @@
 /++
 Write planning for an existing ID3v2.4 native frame sequence.
 
-This module applies the frame-level preservation planner to every
-provenance-preserved native frame in original source order.
+The revision-independent sequence container and iteration algorithm live
+in `audiotag.id3v2.common.sequence_write_plan`.
 
-It plans only frames that already existed in the parsed tag. Canonical
-fields newly created by an editing layer are deliberately outside this
-model and will be planned separately before serialization.
+This module retains explicit ID3v2.4 public names and supplies the
+revision-specific types and frame planner through compile-time traits.
 
 No bytes are emitted here.
 +/
 module audiotag.id3v2.v24.sequence_write_plan;
+
+import audiotag.id3v2.common.sequence_write_plan :
+    Id3v2FrameSequenceWriteEntry,
+    Id3v2FrameSequenceWritePlan,
+    planId3v2ExistingFrameSequenceWrite;
 
 import audiotag.id3v2.v24.canonical_projection :
     Id3v24CanonicalFrameRecord;
@@ -27,161 +31,58 @@ import audiotag.id3v2.v24.writer_policy :
 
 
 /++
-One frame-level plan together with its position in the original native
-frame sequence.
-+/
-struct Id3v24FrameSequenceWriteEntry
-{
-    /// Zero-based index in the original native frame sequence.
-    size_t sourceFrameIndex;
+Compile-time bindings required by the shared ID3v2 sequence planner.
 
-    /// Preservation/regeneration decision for that frame.
-    Id3v24FrameWritePlan plan;
+This type contains no runtime state.
++/
+struct Id3v24FrameSequenceWriteTraits
+{
+    alias CanonicalFrameRecord =
+        Id3v24CanonicalFrameRecord;
+
+    alias CanonicalFrameMutation =
+        Id3v24CanonicalFrameMutation;
+
+    alias FrameWriteAction =
+        Id3v24FrameWriteAction;
+
+    alias FrameWritePlan =
+        Id3v24FrameWritePlan;
+
+    alias WriteContext =
+        Id3v24WriteContext;
+
+    alias WriterPolicy =
+        Id3v24WriterPolicy;
+
+    alias planCanonicalFrameWrite =
+        planId3v24CanonicalFrameWrite;
 }
 
 
 /++
-Complete write plan for all existing native frames in one ID3v2.4 tag.
-
-Entries remain in original native frame order.
-
-Action counts are retained explicitly so callers can inspect the plan
-without rescanning it.
+One frame-level plan together with its position in the original native
+frame sequence.
 +/
-struct Id3v24FrameSequenceWritePlan
-{
-private:
-    Id3v24FrameSequenceWriteEntry[] _entries;
+alias Id3v24FrameSequenceWriteEntry =
+    Id3v2FrameSequenceWriteEntry!(
+        Id3v24FrameSequenceWriteTraits
+    );
 
-    size_t _preserveCount;
-    size_t _regenerateCount;
-    size_t _discardCount;
-    size_t _rejectCount;
 
-public:
-    /++
-    Returns all frame plans in original native frame order.
-    +/
-    @property
-    const(Id3v24FrameSequenceWriteEntry)[] entries() const
-        @safe pure nothrow @nogc
-    {
-        return _entries;
-    }
-
-    /// Number of existing native frames represented by this plan.
-    @property
-    size_t length() const
-        @safe pure nothrow @nogc
-    {
-        return _entries.length;
-    }
-
-    /// Whether the sequence contains no existing native frames.
-    @property
-    bool empty() const
-        @safe pure nothrow @nogc
-    {
-        return _entries.length == 0;
-    }
-
-    /// Number of frames whose original bytes will be retained.
-    @property
-    size_t preserveCount() const
-        @safe pure nothrow @nogc
-    {
-        return _preserveCount;
-    }
-
-    /// Number of frames that require canonical regeneration.
-    @property
-    size_t regenerateCount() const
-        @safe pure nothrow @nogc
-    {
-        return _regenerateCount;
-    }
-
-    /// Number of existing native frames explicitly planned for discard.
-    @property
-    size_t discardCount() const
-        @safe pure nothrow @nogc
-    {
-        return _discardCount;
-    }
-
-    /// Number of frame decisions that block writing.
-    @property
-    size_t rejectCount() const
-        @safe pure nothrow @nogc
-    {
-        return _rejectCount;
-    }
-
-    /++
-    Returns whether every existing-frame decision permits the write.
-
-    This does not yet account for newly added canonical fields or
-    whole-tag serialization constraints.
-    +/
-    @property
-    bool writable() const
-        @safe pure nothrow @nogc
-    {
-        return _rejectCount == 0;
-    }
-
-package:
-    /++
-    Appends one already planned existing frame.
-
-    This is an internal sequence-planner operation.
-    +/
-    void append(
-        size_t sourceFrameIndex,
-        Id3v24FrameWritePlan plan
-    )
-        @safe
-    {
-        _entries ~=
-            Id3v24FrameSequenceWriteEntry(
-                sourceFrameIndex,
-                plan
-            );
-
-        final switch (plan.action)
-        {
-            case Id3v24FrameWriteAction.preserveOriginal:
-                ++_preserveCount;
-                break;
-
-            case Id3v24FrameWriteAction.regenerate:
-                ++_regenerateCount;
-                break;
-
-            case Id3v24FrameWriteAction.discard:
-                ++_discardCount;
-                break;
-
-            case Id3v24FrameWriteAction.rejectWrite:
-                ++_rejectCount;
-                break;
-        }
-    }
-}
+/++
+Complete write plan for all existing native frames in one ID3v2.4 tag.
++/
+alias Id3v24FrameSequenceWritePlan =
+    Id3v2FrameSequenceWritePlan!(
+        Id3v24FrameSequenceWriteTraits
+    );
 
 
 /++
 Plans all existing native frames in original source order.
 
-One mutation state must be supplied for every native frame record.
-Mutation tracking itself belongs to the future canonical editing/diff
-layer; this function only consumes its result.
-
-Preconditions:
-    `records.length == mutations.length`.
-
-A length mismatch is a programmer/planner error rather than malformed
-external metadata.
+The returned entries preserve source-frame order exactly.
 
 Params:
     records = Existing provenance-preserved native frame records.
@@ -203,31 +104,15 @@ planId3v24ExistingFrameSequenceWrite(
 )
     @safe
 {
-    assert(
-        records.length ==
-        mutations.length
-    );
-
-    auto result =
-        Id3v24FrameSequenceWritePlan.init;
-
-    foreach (index, const record; records)
-    {
-        const framePlan =
-            planId3v24CanonicalFrameWrite(
-                record,
-                mutations[index],
-                context,
-                policy
-            );
-
-        result.append(
-            index,
-            framePlan
+    return
+        planId3v2ExistingFrameSequenceWrite!(
+            Id3v24FrameSequenceWriteTraits
+        )(
+            records,
+            mutations,
+            context,
+            policy
         );
-    }
-
-    return result;
 }
 
 
