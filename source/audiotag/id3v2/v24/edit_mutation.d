@@ -2,29 +2,20 @@
 Derives ID3v2.4 native-frame mutation state from the format-independent
 canonical metadata edit overlay.
 
-A native frame may contribute zero, one or eventually multiple canonical
-fields. `canonicalStart` and `canonicalCount` in the provenance
-projection identify that source range.
-
-Rules:
-
-- no associated canonical fields -> unchanged;
-- all associated source fields unchanged -> unchanged;
-- all associated source fields removed -> removed;
-- every other changed combination -> modified.
-
-The final rule deliberately includes partial removal, replacement of one
-field in a multi-field mapping, and combinations of replacement and
-removal. Such a native frame must eventually be regenerated from the
-resulting canonical state rather than partially patched.
+The revision-independent mutation algorithm lives in
+`audiotag.id3v2.common.edit_mutation`. This module retains the explicit
+ID3v2.4 API and revision-specific types.
 
 This module performs no serialization.
 +/
 module audiotag.id3v2.v24.edit_mutation;
 
 import audiotag.metadata.edit :
-    MetadataSourceFieldEditState,
     MetadataTreeEdit;
+
+import audiotag.id3v2.common.edit_mutation :
+    deriveId3v2CanonicalFrameMutation,
+    deriveId3v2CanonicalFrameMutations;
 
 import audiotag.id3v2.v24.canonical_projection :
     Id3v24CanonicalFrameRecord;
@@ -38,11 +29,6 @@ Derives the mutation state of one provenance-preserved native frame.
 
 The canonical range stored in the frame record must refer to the source
 fields represented by `edit`.
-
-Preconditions:
-    `record.canonicalStart <= edit.sourceFieldCount`.
-    `record.canonicalCount <=
-        edit.sourceFieldCount - record.canonicalStart`.
 
 Params:
     record = Native-frame projection record.
@@ -58,80 +44,13 @@ deriveId3v24CanonicalFrameMutation(
 )
     @safe pure nothrow @nogc
 {
-    assert(
-        record.canonicalStart <=
-        edit.sourceFieldCount
-    );
-
-    assert(
-        record.canonicalCount <=
-        edit.sourceFieldCount -
-            record.canonicalStart
-    );
-
-    if (record.canonicalCount == 0)
-    {
-        return
-            Id3v24CanonicalFrameMutation
-                .unchanged;
-    }
-
-    bool anyUnchanged;
-    bool anyModified;
-    bool anyRemoved;
-
-    foreach (
-        offset;
-        0 .. record.canonicalCount
-    )
-    {
-        const sourceIndex =
-            record.canonicalStart +
-            offset;
-
-        final switch (
-            edit.sourceEdit(sourceIndex).state
-        )
-        {
-            case MetadataSourceFieldEditState.unchanged:
-                anyUnchanged = true;
-                break;
-
-            case MetadataSourceFieldEditState.modified:
-                anyModified = true;
-                break;
-
-            case MetadataSourceFieldEditState.removed:
-                anyRemoved = true;
-                break;
-        }
-    }
-
-    if (
-        anyUnchanged &&
-        !anyModified &&
-        !anyRemoved
-    )
-    {
-        return
-            Id3v24CanonicalFrameMutation
-                .unchanged;
-    }
-
-    if (
-        !anyUnchanged &&
-        !anyModified &&
-        anyRemoved
-    )
-    {
-        return
-            Id3v24CanonicalFrameMutation
-                .removed;
-    }
-
     return
-        Id3v24CanonicalFrameMutation
-            .modified;
+        deriveId3v2CanonicalFrameMutation!(
+            Id3v24CanonicalFrameMutation
+        )(
+            record,
+            edit
+        );
 }
 
 
@@ -158,21 +77,13 @@ deriveId3v24CanonicalFrameMutations(
 )
     @safe
 {
-    auto result =
-        new Id3v24CanonicalFrameMutation[
-            records.length
-        ];
-
-    foreach (index, const record; records)
-    {
-        result[index] =
-            deriveId3v24CanonicalFrameMutation(
-                record,
-                edit
-            );
-    }
-
-    return result;
+    return
+        deriveId3v2CanonicalFrameMutations!(
+            Id3v24CanonicalFrameMutation
+        )(
+            records,
+            edit
+        );
 }
 
 
