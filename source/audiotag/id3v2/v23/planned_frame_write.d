@@ -6,7 +6,8 @@ and concrete native frame serializers.
 
 Currently executable canonical target families:
 
-- ordinary text information (`T***`).
+- ordinary text information (`T***`);
+- ordinary URL links (`W***`, excluding `WXXX`).
 
 Other semantically valid target families remain explicit
 `unsupportedRepresentation` results until their complete native frame
@@ -60,6 +61,10 @@ import audiotag.id3v2.v23.tag_write_plan :
 import audiotag.id3v2.v23.text_information_frame_write :
     serializeNewId3v23TextInformationFrame,
     serializeRegeneratedId3v23TextInformationFrame;
+
+import audiotag.id3v2.v23.url_link_frame_write :
+    serializeNewId3v23UrlLinkFrame,
+    serializeRegeneratedId3v23UrlLinkFrame;
 
 
 /++
@@ -153,8 +158,8 @@ Before physical dispatch the function verifies:
 - re-planning the replacement produces the same target;
 - the preserved source frame still yields a structural regeneration plan.
 
-At present only the ordinary text-information family is physically
-executable.
+At present the ordinary text-information and ordinary URL-link families
+are physically executable.
 
 Params:
     projection = Original provenance-preserving canonical projection.
@@ -402,6 +407,18 @@ serializeId3v23PlannedRegeneration(
             break;
         }
 
+        case Id3v23CanonicalTargetFamily
+            .urlLink:
+        {
+            serialized =
+                serializeRegeneratedId3v23UrlLinkFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -435,8 +452,8 @@ Executes one planned newly introduced canonical frame.
 The function validates that the supplied semantic plan still refers to
 the same canonical edit field before selecting the concrete serializer.
 
-At present only the ordinary text-information target family is
-physically executable.
+At present the ordinary text-information and ordinary URL-link target
+families are physically executable.
 
 Params:
     edit = Canonical edit overlay used to construct `plan`.
@@ -562,6 +579,15 @@ serializeId3v23PlannedNewFrame(
             .textInformation:
             return
                 serializeNewId3v23TextInformationFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
+        case Id3v23CanonicalTargetFamily
+            .urlLink:
+            return
+                serializeNewId3v23UrlLinkFrame(
                     newFields[
                         newFramePlan.newFieldIndex
                     ]
@@ -807,7 +833,7 @@ unittest
 }
 
 
-/// Semantically writable non-text targets remain explicit executor failures.
+/// A planned new ordinary URL dispatches through the v2.3 W*** serializer.
 unittest
 {
     const projection =
@@ -832,6 +858,154 @@ unittest
             Id3v23WriteContext.tagOnly()
         );
 
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(serialized.value[])
+        );
+
+    auto frame =
+        cursor.parseId3v23FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "WCOM"
+    );
+
+    assert(
+        frame.value.data.data ==
+        cast(const(ubyte)[])
+            "https://example.test/"
+    );
+}
+
+
+/// A modified mapped ordinary URL dispatches to URL regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'W', 'C', 'O', 'M',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+            'o', 'l', 'd'
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            urlField(
+                "commercialUrl",
+                "old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        urlField(
+            "commercialUrl",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+    assert(executed.value.hasValue);
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                executed.value.value[]
+            )
+        );
+
+    auto frame =
+        cursor.parseId3v23FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
+
+    assert(
+        frame.value.header.id[] ==
+        "WCOM"
+    );
+
+    assert(
+        frame.value.data.data ==
+        cast(const(ubyte)[]) "new"
+    );
+}
+
+
+/// Semantically writable still-unsupported target families remain explicit failures.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    auto field =
+        textField(
+            "userText",
+            "value"
+        );
+
+    field.description =
+        "custom-key";
+
+    edit.appendNewField(field);
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    /*
+     * The semantic planner supports TXXX. This physical executor does not
+     * yet have the complete v2.3 TXXX frame writer.
+     */
     assert(plan.writable);
     assert(plan.newFrameCount == 1);
 
