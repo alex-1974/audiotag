@@ -6,6 +6,8 @@ The project intends to follow Semantic Versioning once release versions begin.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-08
+
 ### Added
 
 - Git-based version history.
