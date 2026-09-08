@@ -9,7 +9,8 @@ Currently executable canonical target families:
 - ordinary text information (`T***`);
 - ordinary URL links (`W***`, excluding `WXXX`);
 - user-defined text (`TXXX`);
-- user-defined URL (`WXXX`).
+- user-defined URL (`WXXX`);
+- language-qualified text (`COMM`/`USLT`).
 
 Other semantically valid target families remain explicit
 `unsupportedRepresentation` results until their complete native frame
@@ -75,6 +76,10 @@ import audiotag.id3v2.v23.user_text_frame_write :
 import audiotag.id3v2.v23.user_url_frame_write :
     serializeNewId3v23UserUrlFrame,
     serializeRegeneratedId3v23UserUrlFrame;
+
+import audiotag.id3v2.v23.language_text_frame_write :
+    serializeNewId3v23LanguageTextFrame,
+    serializeRegeneratedId3v23LanguageTextFrame;
 
 
 /++
@@ -453,6 +458,18 @@ serializeId3v23PlannedRegeneration(
             break;
         }
 
+        case Id3v23CanonicalTargetFamily
+            .languageText:
+        {
+            serialized =
+                serializeRegeneratedId3v23LanguageTextFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -646,6 +663,15 @@ serializeId3v23PlannedNewFrame(
                     ]
                 );
 
+        case Id3v23CanonicalTargetFamily
+            .languageText:
+            return
+                serializeNewId3v23LanguageTextFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
         default:
             return
                 SerializationResult!(ubyte[])
@@ -759,6 +785,30 @@ version (unittest)
                 "userUrl",
                 value
             );
+
+        result.description =
+            description;
+
+        return result;
+    }
+
+
+    private MetadataField languageTextField(
+        string key,
+        string language,
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto result =
+            textField(
+                key,
+                value
+            );
+
+        result.language =
+            typeof(result.language)(language);
 
         result.description =
             description;
@@ -1318,6 +1368,142 @@ unittest
 }
 
 
+/// A planned new COMM field dispatches through the v2.3 language-text serializer.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        languageTextField(
+            "comment",
+            "eng",
+            "note",
+            "hello"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'C', 'O', 'M', 'M',
+            0x00, 0x00, 0x00, 0x0E,
+            0x00, 0x00,
+
+            0x00,
+            'e', 'n', 'g',
+            'n', 'o', 't', 'e',
+            0x00,
+            'h', 'e', 'l', 'l', 'o'
+        ]
+    );
+}
+
+
+/// A modified mapped USLT frame dispatches to language-text regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'U', 'S', 'L', 'T',
+            0x00, 0x00, 0x00, 0x0B,
+            0x00, 0x00,
+
+            0x00,
+            'e', 'n', 'g',
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            languageTextField(
+                "lyrics",
+                "eng",
+                "key",
+                "old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        languageTextField(
+            "lyrics",
+            "eng",
+            "new-key",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+    assert(executed.value.hasValue);
+
+    assert(
+        executed.value.value ==
+        [
+            'U', 'S', 'L', 'T',
+            0x00, 0x00, 0x00, 0x0F,
+            0x00, 0x00,
+
+            0x00,
+            'e', 'n', 'g',
+            'n', 'e', 'w', '-', 'k', 'e', 'y',
+            0x00,
+            'n', 'e', 'w'
+        ]
+    );
+}
+
+
 /// Semantically writable still-unsupported target families remain explicit failures.
 unittest
 {
@@ -1329,17 +1515,30 @@ unittest
             projection.metadata
         );
 
-    auto field =
-        textField(
-            "comment",
-            "value"
+    import audiotag.metadata.field :
+        MetadataQualifier;
+
+    import audiotag.metadata.value :
+        MetadataBinary;
+
+    MetadataValue wrapped =
+        MetadataBinary.copyFrom(
+            [cast(ubyte) 0x01]
         );
 
-    field.description =
-        "note";
+    auto field =
+        MetadataField(
+            MetadataKey("privateData"),
+            wrapped
+        );
 
-    field.language =
-        typeof(field.language)("eng");
+    field.qualifiers =
+        [
+            MetadataQualifier(
+                "owner",
+                "example.invalid/private"
+            )
+        ];
 
     edit.appendNewField(field);
 
@@ -1351,8 +1550,8 @@ unittest
         );
 
     /*
-     * The semantic planner supports COMM. This physical executor does not
-     * yet have the complete v2.3 language-text frame writer.
+     * The semantic planner supports PRIV. This physical executor does not
+     * yet have the complete v2.3 private-data frame writer.
      */
     assert(plan.writable);
     assert(plan.newFrameCount == 1);
