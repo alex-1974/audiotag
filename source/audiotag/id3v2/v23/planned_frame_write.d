@@ -1,0 +1,1016 @@
+/++
+Execution of semantically planned ID3v2.3 frame serialization.
+
+This module is the dispatch layer between semantic tag-write planning
+and concrete native frame serializers.
+
+Currently executable canonical target families:
+
+- ordinary text information (`T***`).
+
+Other semantically valid target families remain explicit
+`unsupportedRepresentation` results until their complete native frame
+serializers are implemented. They are never silently omitted.
+
+Existing-frame regeneration retains two distinct error domains:
+
+- outer `ParseResult`: malformed preserved source-frame structure;
+- inner `SerializationResult`: planner/writer/output failure.
+
+New frames have no preserved native structure and therefore return only
+`SerializationResult`.
+
+Whole-tag ordering, whole-tag unsynchronisation, padding, tag sizing and
+container updating remain later layers.
++/
+module audiotag.id3v2.v23.planned_frame_write;
+
+import audiotag.core.result :
+    ParseResult;
+
+import audiotag.core.serialization :
+    SerializationError,
+    SerializationErrorCode,
+    SerializationResult;
+
+import audiotag.metadata.edit :
+    MetadataSourceFieldEditState,
+    MetadataTreeEdit;
+
+import audiotag.id3v2.v23.canonical_projection :
+    Id3v23CanonicalProjection;
+
+import audiotag.id3v2.v23.canonical_target :
+    Id3v23CanonicalTargetDefinition,
+    Id3v23CanonicalTargetFamily;
+
+import audiotag.id3v2.v23.frame_write_plan :
+    Id3v23FrameWriteAction;
+
+import audiotag.id3v2.v23.new_frame_plan :
+    Id3v23CanonicalFieldPlan,
+    planId3v23CanonicalField;
+
+import audiotag.id3v2.v23.regeneration_policy :
+    planId3v23MappedFrameRegenerationFormat;
+
+import audiotag.id3v2.v23.tag_write_plan :
+    Id3v23TagWritePlan;
+
+import audiotag.id3v2.v23.text_information_frame_write :
+    serializeNewId3v23TextInformationFrame,
+    serializeRegeneratedId3v23TextInformationFrame;
+
+
+/++
+Result type for executing one planned existing-frame regeneration.
+
+The outer result represents preserved-source structural parsing.
+The inner result represents physical serialization.
++/
+alias Id3v23PlannedRegenerationResult =
+    ParseResult!(
+        SerializationResult!(ubyte[])
+    );
+
+
+/++
+Wraps a writer failure without converting it into a parse failure.
++/
+private Id3v23PlannedRegenerationResult
+writerFailure(
+    SerializationError error
+)
+    @safe
+{
+    return
+        Id3v23PlannedRegenerationResult
+            .success(
+                SerializationResult!(ubyte[])
+                    .failure(error)
+            );
+}
+
+
+/++
+Returns whether two canonical target definitions identify the same
+planned native representation.
+
+This prevents a semantic plan created for another or subsequently
+changed edit overlay from silently selecting an unrelated serializer.
++/
+private bool
+sameTarget(
+    const(Id3v23CanonicalTargetDefinition) first,
+    const(Id3v23CanonicalTargetDefinition) second
+)
+    @safe pure nothrow @nogc
+{
+    return
+        first.key.name ==
+            second.key.name &&
+        first.valueKind ==
+            second.valueKind &&
+        first.frameId ==
+            second.frameId &&
+        first.family ==
+            second.family;
+}
+
+
+/++
+Returns whether a freshly planned canonical field still matches the
+stored semantic field plan.
++/
+private bool
+sameFieldPlan(
+    const(Id3v23CanonicalFieldPlan) current,
+    const(Id3v23CanonicalFieldPlan) stored
+)
+    @safe pure nothrow @nogc
+{
+    return
+        current.status ==
+            stored.status &&
+        sameTarget(
+            current.target,
+            stored.target
+        );
+}
+
+
+/++
+Executes one planned existing-frame regeneration.
+
+Before physical dispatch the function verifies:
+
+- the complete tag plan is writable;
+- the regeneration index exists;
+- source-frame and canonical-source indices remain in range;
+- the existing-frame action is still `regenerate`;
+- the source frame still maps to exactly the planned canonical field;
+- the corresponding source edit is still `modified`;
+- re-planning the replacement produces the same target;
+- the preserved source frame still yields a structural regeneration plan.
+
+At present only the ordinary text-information family is physically
+executable.
+
+Params:
+    projection = Original provenance-preserving canonical projection.
+    edit = Canonical edit overlay used to construct `plan`.
+    plan = Complete semantic tag-write plan.
+    regenerationIndex = Index in `plan.regenerations`.
+    sourceTagUnsynchronised = Whether ID3v2.3 whole-tag
+        unsynchronisation applied while parsing the preserved source
+        frame.
+
+Returns:
+    Outer parse failure for malformed preserved native structure;
+    otherwise inner physical serialization success/failure.
++/
+Id3v23PlannedRegenerationResult
+serializeId3v23PlannedRegeneration(
+    const(Id3v23CanonicalProjection) projection,
+    const(MetadataTreeEdit) edit,
+    const(Id3v23TagWritePlan) plan,
+    size_t regenerationIndex,
+    bool sourceTagUnsynchronised = false
+)
+    @safe
+{
+    if (!plan.writable)
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .unsupportedRepresentation
+                )
+            );
+    }
+
+    if (
+        regenerationIndex >=
+        plan.regenerations.length
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .invalidLength,
+                    regenerationIndex,
+                    regenerationIndex,
+                    plan.regenerations.length
+                )
+            );
+    }
+
+    const regeneration =
+        plan.regenerations[
+            regenerationIndex
+        ];
+
+    if (!regeneration.writable)
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .unsupportedRepresentation,
+                    regenerationIndex,
+                    cast(ulong) regeneration.status
+                )
+            );
+    }
+
+    if (
+        regeneration.sourceFrameIndex >=
+        projection.frames.length
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .inconsistentStructure,
+                    regeneration.sourceFrameIndex,
+                    regeneration.sourceFrameIndex,
+                    projection.frames.length
+                )
+            );
+    }
+
+    if (
+        regeneration.canonicalSourceIndex >=
+        edit.sourceFieldCount
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .inconsistentStructure,
+                    regeneration.canonicalSourceIndex,
+                    regeneration.canonicalSourceIndex,
+                    edit.sourceFieldCount
+                )
+            );
+    }
+
+    /*
+     * Existing-frame sequence plans contain one source-ordered entry for
+     * every preserved native frame.
+     */
+    if (
+        regeneration.sourceFrameIndex >=
+        plan.existingFrames.entries.length
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .inconsistentStructure,
+                    regeneration.sourceFrameIndex
+                )
+            );
+    }
+
+    const existingEntry =
+        plan.existingFrames.entries[
+            regeneration.sourceFrameIndex
+        ];
+
+    if (
+        existingEntry.sourceFrameIndex !=
+            regeneration.sourceFrameIndex ||
+        existingEntry.plan.action !=
+            Id3v23FrameWriteAction.regenerate
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .inconsistentStructure,
+                    regeneration.sourceFrameIndex
+                )
+            );
+    }
+
+    const record =
+        projection.frames[
+            regeneration.sourceFrameIndex
+        ];
+
+    if (
+        record.canonicalCount != 1 ||
+        record.canonicalStart !=
+            regeneration.canonicalSourceIndex
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .inconsistentStructure,
+                    regeneration.sourceFrameIndex
+                )
+            );
+    }
+
+    const sourceEdit =
+        edit.sourceEdit(
+            regeneration.canonicalSourceIndex
+        );
+
+    if (
+        sourceEdit.state !=
+        MetadataSourceFieldEditState.modified
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .inconsistentStructure,
+                    regeneration.canonicalSourceIndex
+                )
+            );
+    }
+
+    /*
+     * Re-plan the current replacement so a semantic plan from another
+     * or subsequently changed edit overlay cannot select a serializer
+     * using stale target information.
+     */
+    const currentFieldPlan =
+        planId3v23CanonicalField(
+            sourceEdit.replacement
+        );
+
+    if (
+        !currentFieldPlan.writable ||
+        !sameFieldPlan(
+            currentFieldPlan,
+            regeneration.fieldPlan
+        )
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .inconsistentStructure,
+                    regeneration.canonicalSourceIndex
+                )
+            );
+    }
+
+    auto formatPlan =
+        planId3v23MappedFrameRegenerationFormat(
+            record.native.envelope,
+            sourceTagUnsynchronised
+        );
+
+    if (formatPlan.hasError)
+    {
+        return
+            Id3v23PlannedRegenerationResult
+                .failure(
+                    formatPlan.error
+                );
+    }
+
+    SerializationResult!(ubyte[]) serialized;
+
+    switch (
+        regeneration.fieldPlan.target.family
+    )
+    {
+        case Id3v23CanonicalTargetFamily
+            .textInformation:
+        {
+            serialized =
+                serializeRegeneratedId3v23TextInformationFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
+        default:
+        {
+            serialized =
+                SerializationResult!(ubyte[])
+                    .failure(
+                        SerializationError(
+                            SerializationErrorCode
+                                .unsupportedRepresentation,
+                            regeneration.sourceFrameIndex,
+                            cast(ulong)
+                                regeneration
+                                    .fieldPlan
+                                    .target
+                                    .family
+                        )
+                    );
+
+            break;
+        }
+    }
+
+    return
+        Id3v23PlannedRegenerationResult
+            .success(serialized);
+}
+
+
+/++
+Executes one planned newly introduced canonical frame.
+
+The function validates that the supplied semantic plan still refers to
+the same canonical edit field before selecting the concrete serializer.
+
+At present only the ordinary text-information target family is
+physically executable.
+
+Params:
+    edit = Canonical edit overlay used to construct `plan`.
+    plan = Complete semantic tag-write plan.
+    newFramePlanIndex = Position in `plan.newFrames`.
+
+Returns:
+    Complete new native frame bytes or a structured writer failure.
++/
+SerializationResult!(ubyte[])
+serializeId3v23PlannedNewFrame(
+    const(MetadataTreeEdit) edit,
+    const(Id3v23TagWritePlan) plan,
+    size_t newFramePlanIndex
+)
+    @safe
+{
+    if (!plan.writable)
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .unsupportedRepresentation
+                    )
+                );
+    }
+
+    if (
+        newFramePlanIndex >=
+        plan.newFrames.length
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .invalidLength,
+                        newFramePlanIndex,
+                        newFramePlanIndex,
+                        plan.newFrames.length
+                    )
+                );
+    }
+
+    const newFramePlan =
+        plan.newFrames[
+            newFramePlanIndex
+        ];
+
+    if (!newFramePlan.writable)
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .unsupportedRepresentation,
+                        newFramePlanIndex,
+                        cast(ulong) newFramePlan.status
+                    )
+                );
+    }
+
+    const newFields =
+        edit.newFields;
+
+    if (
+        newFramePlan.newFieldIndex >=
+        newFields.length
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .inconsistentStructure,
+                        newFramePlan.newFieldIndex,
+                        newFramePlan.newFieldIndex,
+                        newFields.length
+                    )
+                );
+    }
+
+    /*
+     * Re-plan the referenced field so a plan from another or changed
+     * edit overlay cannot silently serialize unrelated metadata.
+     */
+    const currentFieldPlan =
+        planId3v23CanonicalField(
+            newFields[
+                newFramePlan.newFieldIndex
+            ]
+        );
+
+    if (
+        !currentFieldPlan.writable ||
+        currentFieldPlan.status !=
+            newFramePlan.status ||
+        !sameTarget(
+            currentFieldPlan.target,
+            newFramePlan.target
+        )
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .inconsistentStructure,
+                        newFramePlan.newFieldIndex
+                    )
+                );
+    }
+
+    switch (newFramePlan.target.family)
+    {
+        case Id3v23CanonicalTargetFamily
+            .textInformation:
+            return
+                serializeNewId3v23TextInformationFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
+        default:
+            return
+                SerializationResult!(ubyte[])
+                    .failure(
+                        SerializationError(
+                            SerializationErrorCode
+                                .unsupportedRepresentation,
+                            newFramePlan.newFieldIndex,
+                            cast(ulong)
+                                newFramePlan.target.family
+                        )
+                    );
+    }
+}
+
+
+version (unittest)
+{
+    import audiotag.core.cursor :
+        ByteCursor;
+
+    import audiotag.core.span :
+        ByteSpan;
+
+    import audiotag.metadata.field :
+        MetadataField,
+        MetadataKey;
+
+    import audiotag.metadata.value :
+        MetadataText,
+        MetadataUrl,
+        MetadataValue;
+
+    import audiotag.id3v2.v23.canonical_mapping :
+        Id3v23CanonicalMappingResult;
+
+    import audiotag.id3v2.v23.frame :
+        parseId3v23FrameEnvelope;
+
+    import audiotag.id3v2.v23.native_frame :
+        Id3v23NativeFrame;
+
+    import audiotag.id3v2.v23.tag_write_plan :
+        planId3v23CanonicalTagWrite;
+
+    import audiotag.id3v2.v23.writer_policy :
+        Id3v23WriteContext;
+
+
+    private MetadataField textField(
+        string key,
+        string value
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataText(value);
+
+        return
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+    }
+
+
+    private MetadataField urlField(
+        string key,
+        string value
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataUrl(value);
+
+        return
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+    }
+
+
+    private Id3v23CanonicalProjection
+    projectionWithMappedFrame(
+        const(ubyte)[] bytes,
+        MetadataField mappedField
+    )
+        @safe
+    {
+        auto cursor =
+            ByteCursor(
+                ByteSpan(bytes)
+            );
+
+        auto envelope =
+            cursor.parseId3v23FrameEnvelope();
+
+        assert(envelope.hasValue);
+        assert(cursor.empty);
+
+        auto native =
+            Id3v23NativeFrame.init;
+
+        native.envelope =
+            envelope.value;
+
+        auto projection =
+            Id3v23CanonicalProjection.init;
+
+        projection.append(
+            native,
+            Id3v23CanonicalMappingResult
+                .success(mappedField)
+        );
+
+        return projection;
+    }
+}
+
+
+/// A planned new title dispatches through the v2.3 T*** serializer.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        textField(
+            "title",
+            "New"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+            0x00, 'N', 'e', 'w'
+        ]
+    );
+}
+
+
+/// A modified mapped text frame dispatches to v2.3 regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+            0x00, 'O', 'l', 'd'
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            textField(
+                "title",
+                "Old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        textField(
+            "title",
+            "New"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+
+    auto serialized =
+        executed.value;
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+            0x00, 'N', 'e', 'w'
+        ]
+    );
+}
+
+
+/// Semantically writable non-text targets remain explicit executor failures.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        urlField(
+            "commercialUrl",
+            "https://example.test/"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasError);
+
+    assert(
+        serialized.error.code ==
+        SerializationErrorCode
+            .unsupportedRepresentation
+    );
+}
+
+
+/// A plan cannot be executed against an unrelated replacement overlay.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto plannedEdit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    plannedEdit.appendNewField(
+        textField(
+            "title",
+            "Title"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            plannedEdit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+
+    auto otherEdit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    otherEdit.appendNewField(
+        textField(
+            "album",
+            "Album"
+        )
+    );
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            otherEdit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasError);
+
+    assert(
+        serialized.error.code ==
+        SerializationErrorCode
+            .inconsistentStructure
+    );
+}
+
+
+/// Out-of-range new-frame plan indices remain structured writer failures.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        textField(
+            "title",
+            "Title"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            1
+        );
+
+    assert(serialized.hasError);
+
+    assert(
+        serialized.error.code ==
+        SerializationErrorCode.invalidLength
+    );
+}
+
+
+/// Unsupported source transformations remain inner writer failures.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x80,
+
+            // Declared decompressed size.
+            0x00, 0x00, 0x00, 0x01,
+
+            // Opaque compressed payload.
+            0x55
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            textField(
+                "title",
+                "Old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        textField(
+            "title",
+            "New"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+
+    assert(executed.value.hasError);
+
+    assert(
+        executed.value.error.code ==
+        SerializationErrorCode
+            .unsupportedRepresentation
+    );
+}
