@@ -1,12 +1,19 @@
 /++
-Exact physical serialization of one unchanged preserved ID3v2.3 frame.
+Logical native serialization of one unchanged preserved ID3v2.3 frame.
 
-For a source tag without ID3v2.3 whole-tag unsynchronisation, an
-unchanged native frame can be emitted without semantic regeneration:
+An unchanged native frame is reconstructed without semantic
+regeneration:
 
 - the parsed fixed frame-header values are serialized back into their
   unique ordinary ID3v2.3 ten-byte representation;
-- the complete bounded native frame-data region is copied unchanged.
+- for a normal source tag, the bounded native frame-data region is
+  copied unchanged;
+- for a whole-tag-unsynchronised source, the bounded physical frame-data
+  region is traversed logically and stuffing bytes are removed.
+
+The result is always an ordinary logical/native frame. Any required
+ID3v2.3 whole-tag unsynchronisation is applied later to the complete
+assembled tag body.
 
 This preserves:
 
@@ -20,23 +27,17 @@ This preserves:
 
 `sourceOffset` is provenance and is intentionally not serialized.
 
-ID3v2.3 whole-tag unsynchronisation requires separate treatment.
-
 Unlike ID3v2.4 frame-level unsynchronisation, v2.3 unsynchronisation is
 applied across the complete tag body. Stuffing bytes may therefore occur
-not only inside frame data but also between logical bytes of the frame
-header itself.
+inside both frame headers and frame data.
 
-The current `Id3v23FrameEnvelope` retains the parsed logical header and
-the bounded physical frame-data span, but does not independently retain
-an exact physical copy of every possibly stuffed header byte.
+The parsed frame header already represents its logical values and can be
+serialized canonically. The bounded physical frame-data span is decoded
+through `Id3v23DataCursor` when the source tag was unsynchronised.
 
-Consequently this writer deliberately rejects
-`sourceTagUnsynchronised == true`.
-
-Whole-tag unsynchronisation writing belongs to the later sequence/tag
-writer and must establish one coherent representation for preserved,
-regenerated and newly introduced frames.
+This deliberately preserves native logical bytes rather than attempting
+to preserve source physical stuffing. The complete tag writer later
+decides and applies one coherent whole-tag unsynchronisation transform.
 
 No tag header, padding or container bytes are serialized here.
 +/
@@ -46,6 +47,9 @@ import audiotag.core.serialization :
     SerializationError,
     SerializationErrorCode,
     SerializationResult;
+
+import audiotag.id3v2.v23.data_cursor :
+    Id3v23DataCursor;
 
 import audiotag.id3v2.v23.frame :
     Id3v23FrameEnvelope;
@@ -57,8 +61,9 @@ import audiotag.id3v2.v23.frame_header_write :
 /++
 Serializes one unchanged provenance-preserved ID3v2.3 frame.
 
-At present exact preservation is supported only when the source tag did
-not use ID3v2.3 whole-tag unsynchronisation.
+Preservation is defined at the native logical-frame level. For a
+whole-tag-unsynchronised source, physical stuffing is removed before the
+frame is returned to the sequence/tag writer.
 
 Params:
     frame = Original unchanged frame envelope.
@@ -66,9 +71,9 @@ Params:
         used whole-tag unsynchronisation.
 
 Returns:
-    Complete owned native frame bytes for a normal source tag, or a
-    structured serialization failure when whole-tag unsynchronisation
-    would require a later tag-level transformation.
+    Complete owned logical/native frame bytes, or a structured
+    serialization failure when the supplied preserved envelope is
+    inconsistent with its declared logical frame-data size.
 
 Safety:
     No source bytes are modified. Output owns its copied bytes.
@@ -80,25 +85,6 @@ serializePreservedId3v23Frame(
 )
     @safe
 {
-    /*
-     * Whole-tag unsynchronisation cannot safely be handled by rebuilding
-     * one isolated frame.
-     *
-     * In particular, stuffing may have occurred inside the physical
-     * frame-header representation or across a later frame/tag boundary.
-     */
-    if (sourceTagUnsynchronised)
-    {
-        return
-            SerializationResult!(ubyte[])
-                .failure(
-                    SerializationError(
-                        SerializationErrorCode
-                            .unsupportedRepresentation
-                    )
-                );
-    }
-
     auto encodedHeader =
         serializeId3v23FrameHeader(
             frame.header
@@ -113,22 +99,103 @@ serializePreservedId3v23Frame(
                 );
     }
 
-    /*
-     * Without whole-tag unsynchronisation, the physical frame-data span
-     * has exactly the logical length declared by the header.
-     *
-     * A valid non-unsynchronised frame envelope is produced with this
-     * invariant by the structural parser.
-     */
-    assert(
-        frame.data.length ==
-        frame.header.size
-    );
+    ubyte[] logicalData;
+
+    if (sourceTagUnsynchronised)
+    {
+        /*
+         * `frame.data` retains the physical bytes consumed for exactly
+         * `frame.header.size` logical frame-data bytes. Decode that
+         * bounded region without interpreting its native contents.
+         *
+         * This works equally for unknown, compressed and encrypted frame
+         * data because whole-tag unsynchronisation is purely a byte-stream
+         * transformation.
+         */
+        logicalData =
+            new ubyte[
+                cast(size_t)
+                    frame.header.size
+            ];
+
+        auto cursor =
+            Id3v23DataCursor(
+                frame.data,
+                true
+            );
+
+        foreach (index; 0 .. logicalData.length)
+        {
+            auto decoded =
+                cursor.takeByte();
+
+            if (decoded.hasError)
+            {
+                return
+                    SerializationResult!(ubyte[])
+                        .failure(
+                            SerializationError(
+                                SerializationErrorCode
+                                    .inconsistentStructure,
+                                index,
+                                frame.data.length,
+                                frame.header.size
+                            )
+                        );
+            }
+
+            logicalData[index] =
+                decoded.value.value;
+        }
+
+        /*
+         * A parser-produced frame envelope must contain neither fewer nor
+         * additional physical bytes after exactly the declared logical
+         * frame data have been recovered.
+         */
+        if (!cursor.empty)
+        {
+            return
+                SerializationResult!(ubyte[])
+                    .failure(
+                        SerializationError(
+                            SerializationErrorCode
+                                .inconsistentStructure,
+                            logicalData.length,
+                            frame.data.length,
+                            frame.header.size
+                        )
+                    );
+        }
+    }
+    else
+    {
+        if (
+            frame.data.length !=
+            frame.header.size
+        )
+        {
+            return
+                SerializationResult!(ubyte[])
+                    .failure(
+                        SerializationError(
+                            SerializationErrorCode
+                                .inconsistentStructure,
+                            0,
+                            frame.data.length,
+                            frame.header.size
+                        )
+                    );
+        }
+
+        logicalData =
+            frame.data.data.dup;
+    }
 
     auto output =
         new ubyte[
             encodedHeader.value.length +
-            frame.data.length
+            logicalData.length
         ];
 
     output[
@@ -141,7 +208,7 @@ serializePreservedId3v23Frame(
         encodedHeader.value.length ..
         $
     ] =
-        frame.data.data;
+        logicalData;
 
     return
         SerializationResult!(ubyte[])
@@ -348,7 +415,7 @@ unittest
 }
 
 
-/// Whole-tag-unsynchronised source frames are blocked at this layer.
+/// Whole-tag-unsynchronised source data are restored to logical bytes.
 unittest
 {
     /*
@@ -356,40 +423,211 @@ unittest
      *
      *     FF E1
      *
-     * Physical source frame data after v2.3 whole-tag
-     * unsynchronisation:
+     * Physical whole-tag-unsynchronised source data:
      *
      *     FF 00 E1
      */
     const ubyte[] bytes =
         [
             'A', 'B', 'C', '1',
-
-            /*
-             * Two logical frame-data bytes.
-             */
             0x00, 0x00, 0x00, 0x02,
-
             0x00, 0x00,
 
-            0xFF,
-            0x00,
-            0xE1
+            0xFF, 0x00, 0xE1
         ];
 
     const frame =
         parseTestFrame(
             bytes,
-            7000,
+            3000,
             true
         );
 
-    /*
-     * The structural envelope deliberately retains the complete
-     * physical data region.
-     */
     assert(frame.header.size == 2);
     assert(frame.data.length == 3);
+
+    auto serialized =
+        serializePreservedId3v23Frame(
+            frame,
+            true
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'A', 'B', 'C', '1',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0xFF, 0xE1
+        ]
+    );
+}
+
+
+/// Logical FF 00 source data remain exact native bytes after decoding.
+unittest
+{
+    /*
+     * With whole-tag unsynchronisation active:
+     *
+     *     logical  FF 00
+     *     physical FF 00 00
+     */
+    const ubyte[] bytes =
+        [
+            'A', 'B', 'C', '1',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0xFF, 0x00, 0x00
+        ];
+
+    const frame =
+        parseTestFrame(
+            bytes,
+            4000,
+            true
+        );
+
+    auto serialized =
+        serializePreservedId3v23Frame(
+            frame,
+            true
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value[$ - 2 .. $] ==
+        [0xFF, 0x00]
+    );
+}
+
+
+/// Stuffing inside the physical frame header is not preserved physically.
+unittest
+{
+    /*
+     * Logical header:
+     *
+     *     size   = 00 00 00 FF
+     *     status = 00
+     *
+     * With whole-tag unsynchronisation active the boundary becomes:
+     *
+     *     FF 00 00
+     *        ^  ^
+     *        |  logical status
+     *        stuffing
+     */
+    ubyte[] bytes =
+        [
+            'A', 'B', 'C', '1',
+            0x00, 0x00, 0x00, 0xFF,
+
+            // Stuffing after the final size byte.
+            0x00,
+
+            // Logical status and format flags.
+            0x00, 0x00
+        ];
+
+    bytes.length =
+        bytes.length + 255;
+
+    foreach (
+        index;
+        bytes.length - 255 ..
+        bytes.length
+    )
+    {
+        bytes[index] =
+            0x42;
+    }
+
+    const frame =
+        parseTestFrame(
+            bytes,
+            5000,
+            true
+        );
+
+    assert(frame.header.size == 255);
+    assert(frame.data.length == 255);
+
+    auto serialized =
+        serializePreservedId3v23Frame(
+            frame,
+            true
+        );
+
+    assert(serialized.hasValue);
+
+    /*
+     * The result is the logical/native frame, so the header is exactly ten
+     * bytes again and contains no source stuffing.
+     */
+    assert(serialized.value.length == 10 + 255);
+
+    assert(
+        serialized.value[0 .. 10] ==
+        [
+            'A', 'B', 'C', '1',
+            0x00, 0x00, 0x00, 0xFF,
+            0x00, 0x00
+        ]
+    );
+
+    foreach (
+        value;
+        serialized.value[10 .. $]
+    )
+    {
+        assert(value == 0x42);
+    }
+}
+
+
+/// Inconsistent unsynchronised physical data are rejected defensively.
+unittest
+{
+    /*
+     * Header declares two logical bytes, but physical FF 00 decodes to
+     * only one logical byte.
+     */
+    const ubyte[] bytes =
+        [
+            'A', 'B', 'C', '1',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0xFF, 0x00
+        ];
+
+    /*
+     * Construct directly because the structural parser correctly rejects
+     * this truncated logical frame.
+     */
+    import audiotag.id3v2.v23.frame_header :
+        Id3v23FrameHeader;
+
+    const frame =
+        Id3v23FrameEnvelope(
+            Id3v23FrameHeader(
+                0,
+                ['A', 'B', 'C', '1'],
+                2,
+                0,
+                0
+            ),
+            ByteSpan(
+                bytes[10 .. $],
+                10
+            )
+        );
 
     auto serialized =
         serializePreservedId3v23Frame(
@@ -402,6 +640,6 @@ unittest
     assert(
         serialized.error.code ==
         SerializationErrorCode
-            .unsupportedRepresentation
+            .inconsistentStructure
     );
 }
