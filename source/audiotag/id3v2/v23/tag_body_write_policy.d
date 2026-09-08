@@ -24,9 +24,11 @@ Extended header:
   is implemented.
 
 Whole-tag unsynchronisation:
-- currently unsupported for body reconstruction;
-- the frame-sequence writer deliberately emits ordinary
-  non-unsynchronised output.
+- source stuffing is treated as physical provenance and excluded from
+  logical body-capacity planning;
+- the frame-sequence writer emits ordinary logical/native bytes;
+- the outer complete-tag writer applies any required whole-tag
+  unsynchronisation exactly once after logical body serialization.
 
 The resulting logical body length includes the optional extended header,
 complete frame sequence and padding. It excludes the fixed ten-byte tag

@@ -3,12 +3,13 @@ Physical execution of one complete planned ID3v2.3 tag write.
 
 This module composes the existing writer layers:
 
-1. execute the planned native frame sequence;
-2. compare the resulting frame bytes with the preserved source sequence;
-3. plan the tag body from that actual physical change state;
-4. serialize the body;
-5. serialize a header with the resulting physical body size;
-6. concatenate the complete tag.
+1. execute the planned logical/native frame sequence;
+2. compare it with the source frame sequence in the same logical domain;
+3. plan the logical tag body from that actual native change state;
+4. serialize the logical body;
+5. apply whole-tag unsynchronisation when required;
+6. serialize a header with the resulting physical body size;
+7. concatenate the complete tag.
 
 No container/file update is performed here.
 
@@ -105,10 +106,10 @@ Serializes one complete ID3v2.3 tag from a semantic write plan.
 tag and edit operation.
 
 The function does not require a caller-supplied change indicator.
-After frame-sequence execution it compares the actual output bytes with
-`source.frames.frameBytes`. This physical comparison determines whether
-an existing extended-header CRC would become stale and whether body
-padding must be adjusted.
+After frame-sequence execution it compares the logical/native output
+with the source frame sequence reconstructed in the same logical domain.
+This comparison determines whether an existing extended-header CRC would
+become stale and whether body padding must be adjusted.
 
 The source revision and defined header flags are retained. `tagSize` is
 recomputed from the resulting physical body.
