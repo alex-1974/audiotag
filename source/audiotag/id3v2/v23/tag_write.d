@@ -14,14 +14,14 @@ No container/file update is performed here.
 
 Current lower-layer limitations remain explicit, including:
 
-- whole-tag-unsynchronised source tags are not yet writable because
-  preserved source frames cannot yet be reconstructed independently;
 - changed CRC-bearing extended headers are rejected;
 - only currently implemented canonical frame serializer families are
   writable.
 
-For ordinary source tags, whole-tag unsynchronisation is applied to the
-complete resulting logical body whenever required by ID3v2.3.
+Source whole-tag unsynchronisation is treated as physical provenance.
+Preserved source frames are reconstructed in the logical/native byte
+domain, and the complete resulting logical body independently determines
+whether whole-tag unsynchronisation is required for output.
 
 The outer result preserves parser errors that can occur while recovering
 structural information from a preserved native frame during regeneration.
@@ -127,6 +127,66 @@ Returns:
     Complete owned ID3v2.3 tag bytes, an outer source-parse failure, or
     an inner writer failure.
 +/
+/++
+Materializes the validated source frame sequence in logical/native form.
+
+For an ordinary source this is byte-identical to `frameBytes`.
+
+For a whole-tag-unsynchronised source, physical stuffing is removed.
+This provides the correct comparison domain for the newly assembled
+logical/native frame sequence.
++/
+private ParseResult!(ubyte[])
+materializeLogicalSourceFrameSequence(
+    const(Id3v23TagStructure) source
+)
+    @safe
+{
+    auto cursor =
+        source.frameCursor();
+
+    /*
+     * Physical length is an upper bound on logical length because
+     * whole-tag unsynchronisation only inserts bytes.
+     */
+    auto output =
+        new ubyte[
+            source.frames.frameBytes.length
+        ];
+
+    size_t position;
+
+    while (!cursor.empty)
+    {
+        auto decoded =
+            cursor.takeByte();
+
+        if (decoded.hasError)
+        {
+            return
+                ParseResult!(ubyte[])
+                    .failure(
+                        decoded.error
+                    );
+        }
+
+        assert(position < output.length);
+
+        output[position] =
+            decoded.value.value;
+
+        ++position;
+    }
+
+    output.length =
+        position;
+
+    return
+        ParseResult!(ubyte[])
+            .success(output);
+}
+
+
 Id3v23TagSerializationResult
 serializeId3v23PlannedTag(
     const(Id3v23TagStructure) source,
@@ -186,15 +246,36 @@ serializeId3v23PlannedTag(
         frameSequenceResult.value;
 
     /*
-     * Derive physical change from actual output rather than from edit
-     * intent.
+     * Compare like with like.
+     *
+     * `frameSequence` is logical/native output. For an unsynchronised
+     * source, `source.frames.frameBytes` still contains physical stuffing,
+     * so reconstruct its logical/native representation before deriving
+     * actual change.
      *
      * This also catches native policy changes such as discarding an
      * unmapped frame even when no canonical source field was edited.
      */
+    auto sourceFrameSequenceResult =
+        materializeLogicalSourceFrameSequence(
+            source
+        );
+
+    if (sourceFrameSequenceResult.hasError)
+    {
+        return
+            Id3v23TagSerializationResult
+                .failure(
+                    sourceFrameSequenceResult.error
+                );
+    }
+
+    const sourceFrameSequence =
+        sourceFrameSequenceResult.value;
+
     const frameSequenceChanged =
         frameSequence !=
-        source.frames.frameBytes.data;
+        sourceFrameSequence;
 
     Id3v23TagBodyWritePlan bodyPlan =
         planId3v23TagBodyWrite(
@@ -912,23 +993,34 @@ unittest
 }
 
 
-/// Whole-tag-unsynchronised source tags remain explicitly non-writable.
+/// An unchanged whole-tag-unsynchronised source roundtrips stably.
 unittest
 {
+    /*
+     * Logical payload:
+     *
+     *   FF E1
+     *
+     * Physical source payload:
+     *
+     *   FF 00 E1
+     */
     const ubyte[] sourceBytes =
         [
             'I', 'D', '3',
             0x03, 0x00,
 
-            // Whole-tag unsynchronisation flag.
+            // Whole-tag unsynchronisation.
             0x80,
 
-            0x00, 0x00, 0x00, 0x0B,
+            // Physical body size = 13.
+            0x00, 0x00, 0x00, 0x0D,
 
             'X', '0', '0', '1',
-            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x02,
             0x00, 0x00,
-            0x55
+
+            0xFF, 0x00, 0xE1
         ];
 
     const source =
@@ -968,17 +1060,35 @@ unittest
         );
 
     assert(written.hasValue);
+    assert(written.value.hasValue);
 
-    auto serialized =
-        written.value;
+    /*
+     * Logical preservation followed by one fresh whole-tag
+     * unsynchronisation pass reproduces this canonical physical source.
+     */
+    assert(
+        written.value.value ==
+        sourceBytes
+    );
 
-    assert(serialized.hasError);
+    const reparsed =
+        parseTestTag(
+            written.value.value
+        );
 
     assert(
-        serialized.error.code ==
-        SerializationErrorCode
-            .unsupportedRepresentation
+        reparsed.envelope.header
+            .unsynchronisation
     );
+
+    assert(
+        reparsed.envelope.header
+            .tagSize ==
+        13
+    );
+
+    assert(reparsed.frameCount == 1);
+    assert(reparsed.frames.padding.empty);
 }
 
 

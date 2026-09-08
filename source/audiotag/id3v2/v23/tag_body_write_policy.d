@@ -40,8 +40,49 @@ ID3v2.3 has no footer.
 +/
 module audiotag.id3v2.v23.tag_body_write_policy;
 
+import audiotag.id3v2.v23.data_cursor :
+    Id3v23DataCursor;
+
 import audiotag.id3v2.v23.structure :
     Id3v23TagStructure;
+
+
+/++
+Returns the logical length of the source frames-plus-padding region.
+
+For an ordinary source this equals the physical span length.
+
+For a whole-tag-unsynchronised source the physical region may contain
+stuffing bytes. Traverse it through the same logical cursor used by the
+reader so body-capacity planning never mixes physical source length with
+logical newly serialized frame length.
+
+`source` is required to be a strictly validated tag structure, so a
+logical byte read while physical bytes remain cannot fail.
++/
+private size_t
+sourceLogicalFramesAndPaddingLength(
+    const(Id3v23TagStructure) source
+)
+    @safe pure nothrow @nogc
+{
+    auto cursor =
+        Id3v23DataCursor(
+            source.body.framesAndPadding,
+            source.envelope.header
+                .unsynchronisation
+        );
+
+    while (!cursor.empty)
+    {
+        auto decoded =
+            cursor.takeByte();
+
+        assert(decoded.hasValue);
+    }
+
+    return cursor.logicalPosition;
+}
 
 
 /++
@@ -53,9 +94,6 @@ enum Id3v23TagBodyWriteStatus : ubyte
 
     /// The active strict reader requires at least one frame.
     emptyFrameSequence,
-
-    /// Whole-tag byte unsynchronisation writing is not implemented yet.
-    tagLevelUnsynchronisationUnsupported,
 
     /// Logical body already exceeds the 28-bit tag-size domain.
     tagSizeOverflow
@@ -132,15 +170,18 @@ struct Id3v23TagBodyWritePlan
 Plans one resulting ID3v2.3 tag body around an already serialized frame
 sequence.
 
-`frameSequenceChanged` describes physical change relative to the source
-native frame sequence. It must be true not only for canonical edits but
-also when preservation policy discards or otherwise changes native
-frames.
+`frameSequenceChanged` describes logical/native change relative to the
+source native frame sequence. It must be true not only for canonical
+edits but also when preservation policy discards or otherwise changes
+native frames.
 
-For a non-unsynchronised source tag, the original frames-plus-padding
-region acts as available capacity. Shrinking the frame sequence
-increases padding. Moderate growth consumes existing padding before the
-body itself grows.
+The source frames-plus-padding region acts as logical available
+capacity. For an ordinary source logical and physical lengths are
+identical. For a whole-tag-unsynchronised source, stuffing bytes are
+removed before this capacity is calculated.
+
+Shrinking the frame sequence increases logical padding. Moderate growth
+consumes that padding before the logical body itself grows.
 
 Unlike ID3v2.4, an ID3v2.3 extended header stores the exact trailing
 padding size. Consequently an existing non-CRC extended header must be
@@ -177,23 +218,6 @@ planId3v23TagBodyWrite(
     result.frameSequenceLength =
         frameSequenceLength;
 
-    /*
-     * The sequence writer cannot currently produce a complete physical
-     * whole-tag-unsynchronised representation.
-     *
-     * Keep computing the descriptive parts of the plan below, but mark
-     * the result non-writable.
-     */
-    if (
-        source.envelope.header
-            .unsynchronisation
-    )
-    {
-        result.status =
-            Id3v23TagBodyWriteStatus
-                .tagLevelUnsynchronisationUnsupported;
-    }
-
     if (frameSequenceLength == 0)
     {
         /*
@@ -206,13 +230,16 @@ planId3v23TagBodyWrite(
     }
 
     /*
-     * Whole-tag-unsynchronised sources are already blocked above.
+     * Capacity is defined in the logical/native byte domain because the
+     * supplied frame sequence is likewise logical/native.
      *
-     * Therefore this physical source region is also the ordinary byte
-     * capacity available to the newly serialized frame sequence.
+     * For unsynchronised sources this deliberately excludes physical
+     * stuffing bytes.
      */
     const originalCapacity =
-        source.body.framesAndPadding.length;
+        sourceLogicalFramesAndPaddingLength(
+            source
+        );
 
     if (
         frameSequenceLength <=
@@ -231,11 +258,9 @@ planId3v23TagBodyWrite(
     if (source.body.hasExtendedHeader)
     {
         /*
-         * With unsynchronisation blocked, logical and physical extended
-         * header lengths are identical.
-         *
-         * Using logicalLength also describes the size of a regenerated
-         * representation directly.
+         * The body plan always describes the logical extended-header
+         * representation. A whole-tag-unsynchronised source may occupy
+         * more physical bytes because its raw provenance retains stuffing.
          */
         result.extendedHeaderLength =
             source.body.extendedHeader
@@ -247,10 +272,16 @@ planId3v23TagBodyWrite(
                     .paddingSize;
 
         if (
+            !source.envelope.header
+                .unsynchronisation &&
             result.paddingLength ==
-            sourcePaddingLength
+                sourcePaddingLength
         )
         {
+            /*
+             * Only an ordinary source can be copied byte-for-byte into
+             * the logical body.
+             */
             result.extendedHeaderAction =
                 Id3v23ExtendedHeaderWriteAction
                     .preserveOriginal;
@@ -258,9 +289,13 @@ planId3v23TagBodyWrite(
         else
         {
             /*
-             * The ID3v2.3 extended header contains the padding-size
-             * value itself. Keeping the old bytes here would create a
-             * structurally inconsistent tag.
+             * A changed padding size requires regeneration because the
+             * value is stored inside the extended header itself.
+             *
+             * An unsynchronised source also requires regeneration even
+             * when padding is unchanged: its raw provenance may already
+             * contain physical stuffing and must never be copied into a
+             * logical body that will later be unsynchronised again.
              */
             result.extendedHeaderAction =
                 Id3v23ExtendedHeaderWriteAction
@@ -731,44 +766,67 @@ unittest
 }
 
 
-/// Global source unsynchronisation remains blocked at the body layer.
+/// Unsynchronised source capacity is calculated in logical bytes.
 unittest
 {
+    /*
+     * Logical frame:
+     *
+     *   10-byte header
+     *    2-byte payload FF E1
+     *
+     * Whole-tag unsynchronisation makes the physical source frame one
+     * byte larger:
+     *
+     *   FF E1 -> FF 00 E1
+     */
     const ubyte[] bytes =
         [
             'I', 'D', '3',
             0x03, 0x00,
             0x80,
 
-            /*
-             * One ordinary eleven-byte frame. Nothing here requires
-             * stuffing, but the source tag still carries the global flag.
-             */
-            0x00, 0x00, 0x00, 0x0B,
+            // Physical body size = 13.
+            0x00, 0x00, 0x00, 0x0D,
 
-            'T', 'I', 'T', '2',
-            0x00, 0x00, 0x00, 0x01,
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x02,
             0x00, 0x00,
-            0x55
+
+            0xFF, 0x00, 0xE1
         ];
 
     const source =
         parseTestTag(bytes);
 
+    assert(
+        source.body.framesAndPadding.length ==
+        13
+    );
+
     const plan =
         planId3v23TagBodyWrite(
             source,
-            11,
+
+            // Resulting logical/native frame sequence.
+            12,
+
             false
         );
 
     assert(
         plan.status ==
-        Id3v23TagBodyWriteStatus
-            .tagLevelUnsynchronisationUnsupported
+        Id3v23TagBodyWriteStatus.ready
     );
 
-    assert(!plan.writable);
+    assert(plan.writable);
+
+    /*
+     * Physical stuffing must not become reusable logical padding.
+     */
+    assert(plan.frameSequenceLength == 12);
+    assert(plan.paddingLength == 0);
+    assert(plan.logicalBodyLength == 12);
 }
 
 
