@@ -9,4 +9,5 @@ module audiotag.core;
 public import audiotag.core.cursor;
 public import audiotag.core.error;
 public import audiotag.core.result;
+public import audiotag.core.serialization;
 public import audiotag.core.span;
