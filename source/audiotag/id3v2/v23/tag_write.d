@@ -1616,3 +1616,297 @@ unittest
         26
     );
 }
+
+
+/// An unchanged unsynchronised CRC-bearing source keeps its CRC valid.
+unittest
+{
+    /*
+     * Logical body:
+     *
+     *   14-byte CRC extended header
+     *   12-byte unknown frame with payload FF E1
+     *
+     * Whole-tag unsynchronisation expands the frame payload physically:
+     *
+     *   FF E1 -> FF 00 E1
+     *
+     * Logical body size  = 26
+     * Physical body size = 27
+     */
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+
+            // Unsynchronisation + extended header.
+            0xC0,
+
+            // Physical body size = 27.
+            0x00, 0x00, 0x00, 0x1B,
+
+            // Extended-header size = 10.
+            0x00, 0x00, 0x00, 0x0A,
+
+            // CRC present.
+            0x80, 0x00,
+
+            // Padding size = 0.
+            0x00, 0x00, 0x00, 0x00,
+
+            // Existing CRC.
+            0x12, 0x34, 0x56, 0x78,
+
+            // Unknown preserved frame.
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            // Logical FF E1 with physical stuffing.
+            0xFF, 0x00, 0xE1
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    assert(
+        source.envelope.header
+            .unsynchronisation
+    );
+
+    assert(
+        source.body.extendedHeader
+            .hasCrc
+    );
+
+    assert(
+        source.body.extendedHeader
+            .crc32 ==
+        0x1234_5678
+    );
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        nativeFromEnvelope(
+            onlySourceFrame(source)
+        ),
+        Id3v23CanonicalMappingResult
+            .unsupported()
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+
+    auto written =
+        serializeId3v23PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+    assert(written.value.hasValue);
+
+    /*
+     * The source physical stuffing must not be mistaken for a logical
+     * frame change. Reconstructing the same logical body and applying one
+     * fresh whole-tag unsynchronisation pass reproduces the source.
+     */
+    assert(
+        written.value.value ==
+        sourceBytes
+    );
+
+    const reparsed =
+        parseTestTag(
+            written.value.value
+        );
+
+    assert(
+        reparsed.body.extendedHeader
+            .hasCrc
+    );
+
+    assert(
+        reparsed.body.extendedHeader
+            .crc32 ==
+        0x1234_5678
+    );
+
+    assert(
+        reparsed.envelope.header
+            .unsynchronisation
+    );
+
+    assert(
+        reparsed.envelope.header
+            .tagSize ==
+        27
+    );
+}
+
+
+/// A logical frame change still invalidates an unsynchronised source CRC.
+unittest
+{
+    /*
+     * The first frame exists only to require source whole-tag
+     * unsynchronisation.
+     *
+     * The second frame is a mapped TIT2 frame which will be changed while
+     * the source extended header contains a CRC.
+     */
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+
+            // Unsynchronisation + extended header.
+            0xC0,
+
+            /*
+             * Physical body:
+             *
+             *   14 extended header
+             *   13 first physical frame
+             *   14 TIT2 frame
+             * = 41
+             */
+            0x00, 0x00, 0x00, 0x29,
+
+            // Extended-header size = 10.
+            0x00, 0x00, 0x00, 0x0A,
+
+            // CRC present.
+            0x80, 0x00,
+
+            // Padding size = 0.
+            0x00, 0x00, 0x00, 0x00,
+
+            // Existing CRC.
+            0x12, 0x34, 0x56, 0x78,
+
+            // First frame: logical payload FF E1.
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            // Physical whole-tag-unsynchronised representation.
+            0xFF, 0x00, 0xE1,
+
+            // Second frame: TIT2 = "Old".
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+
+            0x00,
+            'O', 'l', 'd'
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    assert(source.frameCount == 2);
+
+    auto frames =
+        source.frameCursor();
+
+    auto first =
+        frames.parseId3v23FrameEnvelope();
+
+    assert(first.hasValue);
+
+    auto second =
+        frames.parseId3v23FrameEnvelope();
+
+    assert(second.hasValue);
+    assert(frames.empty);
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        nativeFromEnvelope(
+            first.value
+        ),
+        Id3v23CanonicalMappingResult
+            .unsupported()
+    );
+
+    projection.append(
+        nativeFromEnvelope(
+            second.value
+        ),
+        Id3v23CanonicalMappingResult
+            .success(
+                textField(
+                    "title",
+                    "Old"
+                )
+            )
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    /*
+     * There is exactly one canonical source field. It belongs to the
+     * second native frame.
+     *
+     * Keep the replacement the same length so this test isolates CRC
+     * invalidation rather than body-capacity changes.
+     */
+    edit.replaceSourceField(
+        0,
+        textField(
+            "title",
+            "New"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    /*
+     * Semantic/native planning itself is valid. The later body policy is
+     * responsible for rejecting reuse of a stale source CRC.
+     */
+    assert(plan.writable);
+
+    auto written =
+        serializeId3v23PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+    assert(written.value.hasError);
+
+    assert(
+        written.value.error.code ==
+        SerializationErrorCode
+            .unsupportedRepresentation
+    );
+}
