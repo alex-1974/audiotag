@@ -43,15 +43,18 @@ import audiotag.id3v2.v23.extended_header :
 Serializes the structural form of an existing ID3v2.3 extended header
 with a supplied resulting padding size.
 
-For the CRC form the existing CRC value is copied unchanged. The caller
-must therefore ensure that preserving that CRC is semantically valid.
-The tag-body policy blocks changed frame sequences with an existing CRC
-until CRC generation is implemented.
+The two-argument overload preserves the existing source CRC value.
+
+The three-argument overload accepts the CRC value that belongs to the
+resulting logical/native frame sequence. This is the path used when
+frames have changed and their checksum has been recomputed.
 
 Params:
-    source = Parsed source extended header whose structural form and
-        optional CRC value are retained.
+    source = Parsed source extended header whose structural form is
+        retained.
     paddingSize = Number of trailing padding bytes in the resulting tag.
+    resultingCrc32 = CRC-32 belonging to the resulting logical/native
+        frame sequence. Ignored when `source` has no CRC field.
 
 Returns:
     Ten-byte non-CRC or fourteen-byte CRC extended-header bytes, or a
@@ -62,6 +65,27 @@ SerializationResult!(ubyte[])
 serializeRegeneratedId3v23ExtendedHeader(
     const(Id3v23ExtendedHeader) source,
     uint paddingSize
+)
+    @safe
+{
+    return
+        serializeRegeneratedId3v23ExtendedHeader(
+            source,
+            paddingSize,
+            source.crc32
+        );
+}
+
+
+/++
+Serializes a regenerated ID3v2.3 extended header with an explicit
+resulting CRC-32 value.
++/
+SerializationResult!(ubyte[])
+serializeRegeneratedId3v23ExtendedHeader(
+    const(Id3v23ExtendedHeader) source,
+    uint paddingSize,
+    uint resultingCrc32
 )
     @safe
 {
@@ -163,24 +187,24 @@ serializeRegeneratedId3v23ExtendedHeader(
     if (hasCrc)
     {
         /*
-         * Preserve the source CRC value. Recalculation belongs to a
-         * later CRC writer/policy extension.
+         * The caller supplies the CRC that belongs to the resulting
+         * logical/native frame sequence.
          */
         output[10] =
             cast(ubyte)
-                (source.crc32 >> 24);
+                (resultingCrc32 >> 24);
 
         output[11] =
             cast(ubyte)
-                (source.crc32 >> 16);
+                (resultingCrc32 >> 16);
 
         output[12] =
             cast(ubyte)
-                (source.crc32 >> 8);
+                (resultingCrc32 >> 8);
 
         output[13] =
             cast(ubyte)
-                source.crc32;
+                resultingCrc32;
     }
 
     return
@@ -481,5 +505,82 @@ unittest
         serialized.error.code ==
         SerializationErrorCode
             .inconsistentStructure
+    );
+}
+
+
+
+/// An explicit resulting CRC replaces the source checksum.
+unittest
+{
+    const source =
+        testExtendedHeader(
+            10,
+            0x8000,
+            2,
+            0xDEAD_BEEF
+        );
+
+    auto serialized =
+        serializeRegeneratedId3v23ExtendedHeader(
+            source,
+            2,
+            0x9661_5AA8
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            0x00, 0x00, 0x00, 0x0A,
+            0x80, 0x00,
+            0x00, 0x00, 0x00, 0x02,
+            0x96, 0x61, 0x5A, 0xA8
+        ]
+    );
+
+    auto cursor =
+        Id3v23DataCursor(
+            ByteSpan(serialized.value),
+            false
+        );
+
+    auto parsed =
+        cursor.parseId3v23ExtendedHeader();
+
+    assert(parsed.hasValue);
+    assert(cursor.empty);
+
+    assert(parsed.value.hasCrc);
+    assert(parsed.value.paddingSize == 2);
+    assert(parsed.value.crc32 == 0x9661_5AA8);
+}
+
+
+/// The compatibility overload still preserves an unchanged source CRC.
+unittest
+{
+    const source =
+        testExtendedHeader(
+            10,
+            0x8000,
+            1,
+            0x1234_5678
+        );
+
+    auto serialized =
+        serializeRegeneratedId3v23ExtendedHeader(
+            source,
+            3
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value[10 .. 14] ==
+        [
+            0x12, 0x34, 0x56, 0x78
+        ]
     );
 }
