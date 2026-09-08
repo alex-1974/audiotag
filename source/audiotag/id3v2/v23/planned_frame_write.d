@@ -10,7 +10,8 @@ Currently executable canonical target families:
 - ordinary URL links (`W***`, excluding `WXXX`);
 - user-defined text (`TXXX`);
 - user-defined URL (`WXXX`);
-- language-qualified text (`COMM`/`USLT`).
+- language-qualified text (`COMM`/`USLT`);
+- private binary data (`PRIV`).
 
 Other semantically valid target families remain explicit
 `unsupportedRepresentation` results until their complete native frame
@@ -80,6 +81,10 @@ import audiotag.id3v2.v23.user_url_frame_write :
 import audiotag.id3v2.v23.language_text_frame_write :
     serializeNewId3v23LanguageTextFrame,
     serializeRegeneratedId3v23LanguageTextFrame;
+
+import audiotag.id3v2.v23.private_frame_write :
+    serializeNewId3v23PrivateFrame,
+    serializeRegeneratedId3v23PrivateFrame;
 
 
 /++
@@ -470,6 +475,18 @@ serializeId3v23PlannedRegeneration(
             break;
         }
 
+        case Id3v23CanonicalTargetFamily
+            .privateData:
+        {
+            serialized =
+                serializeRegeneratedId3v23PrivateFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -672,6 +689,15 @@ serializeId3v23PlannedNewFrame(
                     ]
                 );
 
+        case Id3v23CanonicalTargetFamily
+            .privateData:
+            return
+                serializeNewId3v23PrivateFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
         default:
             return
                 SerializationResult!(ubyte[])
@@ -812,6 +838,41 @@ version (unittest)
 
         result.description =
             description;
+
+        return result;
+    }
+
+
+    private MetadataField privateField(
+        string owner,
+        const(ubyte)[] data
+    )
+        @safe
+    {
+        import audiotag.metadata.field :
+            MetadataQualifier;
+
+        import audiotag.metadata.value :
+            MetadataBinary;
+
+        MetadataValue wrapped =
+            MetadataBinary.copyFrom(
+                data
+            );
+
+        auto result =
+            MetadataField(
+                MetadataKey("privateData"),
+                wrapped
+            );
+
+        result.qualifiers =
+            [
+                MetadataQualifier(
+                    "owner",
+                    owner
+                )
+            ];
 
         return result;
     }
@@ -1504,6 +1565,146 @@ unittest
 }
 
 
+/// A planned new PRIV field dispatches through the v2.3 private serializer.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        privateField(
+            "owner",
+            [
+                cast(ubyte) 0x01,
+                cast(ubyte) 0x00,
+                cast(ubyte) 0xFF
+            ]
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'P', 'R', 'I', 'V',
+            0x00, 0x00, 0x00, 0x09,
+            0x00, 0x00,
+
+            'o', 'w', 'n', 'e', 'r',
+            0x00,
+
+            0x01,
+            0x00,
+            0xFF
+        ]
+    );
+}
+
+
+/// A modified mapped PRIV frame dispatches to private-data regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'P', 'R', 'I', 'V',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            'o', 'w', 'n', 'e', 'r',
+            0x00,
+            0x01,
+            0x02
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            privateField(
+                "owner",
+                [
+                    cast(ubyte) 0x01,
+                    cast(ubyte) 0x02
+                ]
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        privateField(
+            "new-owner",
+            [
+                cast(ubyte) 0xAA,
+                cast(ubyte) 0x00
+            ]
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+    assert(executed.value.hasValue);
+
+    assert(
+        executed.value.value ==
+        [
+            'P', 'R', 'I', 'V',
+            0x00, 0x00, 0x00, 0x0C,
+            0x00, 0x00,
+
+            'n', 'e', 'w', '-', 'o', 'w', 'n', 'e', 'r',
+            0x00,
+
+            0xAA,
+            0x00
+        ]
+    );
+}
+
+
 /// Semantically writable still-unsupported target families remain explicit failures.
 unittest
 {
@@ -1528,7 +1729,7 @@ unittest
 
     auto field =
         MetadataField(
-            MetadataKey("privateData"),
+            MetadataKey("uniqueFileIdentifier"),
             wrapped
         );
 
@@ -1536,7 +1737,7 @@ unittest
         [
             MetadataQualifier(
                 "owner",
-                "example.invalid/private"
+                "example.invalid/ufid"
             )
         ];
 
@@ -1550,8 +1751,8 @@ unittest
         );
 
     /*
-     * The semantic planner supports PRIV. This physical executor does not
-     * yet have the complete v2.3 private-data frame writer.
+     * The semantic planner supports UFID. This physical executor does not
+     * yet have the complete v2.3 unique-file-identifier frame writer.
      */
     assert(plan.writable);
     assert(plan.newFrameCount == 1);
