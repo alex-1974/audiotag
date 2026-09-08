@@ -13,7 +13,7 @@ Legend:
 | File/container | Metadata/tag system | Read | Write | Status / notes |
 |---|---|---:|---:|---|
 | MPEG Audio / MP3 | ID3v2.4 | Core | Core | Active bounded parser, canonical mapping and complete tag codec writer; physical MP3/container update strategy not yet implemented |
-| MPEG Audio / MP3 | ID3v2.3 | POC | — | Legacy parser reads header but applies incomplete version-specific rules |
+| MPEG Audio / MP3 | ID3v2.3 | Core | Core | Active bounded parser, canonical mapping and complete tag codec writer with whole-tag unsynchronisation and extended-header CRC support; physical MP3/container update strategy not yet implemented |
 | MPEG Audio / MP3 | ID3v2.2 | — | — | Planned |
 | MPEG Audio / MP3 | ID3v1 | — | — | Planned |
 | MPEG Audio / MP3 | APEv2 | — | — | Planned |

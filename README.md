@@ -41,17 +41,23 @@ The active implementation now includes:
 - structured parse and serialization errors;
 - strict bounded ID3v2.4 tag and frame parsing;
 - native/provenance-aware ID3v2.4 semantic frame decoding;
+- strict bounded ID3v2.3 tag, extended-header, frame and padding parsing;
+- provenance-preserving ID3v2.3 whole-tag unsynchronisation traversal;
 - an order-preserving canonical metadata tree and edit overlay;
-- deterministic canonical-to-ID3v2.4 planning;
-- complete ID3v2.4 tag serialization for the currently targeted frame
-  families;
-- parse → write → parse tests for T***, W***, TXXX, WXXX, COMM, USLT,
-  APIC, PRIV and UFID;
+- deterministic canonical-to-ID3v2.4 and canonical-to-ID3v2.3 planning;
+- complete ID3v2.4 and ID3v2.3 tag serialization for the currently
+  targeted frame families;
+- canonical reader/writer support for T***, W***, TXXX, WXXX, COMM,
+  USLT, APIC, PRIV and UFID;
+- ID3v2.3 whole-tag unsynchronisation writing;
+- ID3v2.3 extended-header CRC validation and regeneration;
+- parse → write → parse coverage for ordinary, unsynchronised and
+  CRC-bearing ID3v2.3 tags;
 - preservation, regeneration, discard/reject and padding policies.
 
-The ID3v2.4 tag codec does not yet constitute an MPEG/MP3 container
-writer: inserting or resizing the resulting tag inside an audio file is
-a separate layer.
+The ID3v2.3 and ID3v2.4 tag codecs do not yet constitute an MPEG/MP3
+container writer: inserting or resizing the resulting tag inside an
+audio file is a separate layer.
 
 Known legacy issues remain intentionally isolated rather than being
 fixed opportunistically during the core rewrite.

@@ -215,14 +215,37 @@ Deliberately deferred beyond this phase:
 
 ## Phase 6 — ID3 version family
 
-Add:
+Status: in progress. The ID3v2.3 parser/writer milestone is complete
+for the currently targeted canonical frame scope.
 
-- ID3v2.3 framing and encoding rules;
+Implemented for ID3v2.3:
+
+- strict bounded tag, extended-header, frame-sequence and padding parsing;
+- provenance-preserving logical traversal of whole-tag
+  unsynchronisation;
+- canonical reader/writer support for T***, W***, TXXX, WXXX, COMM,
+  USLT, APIC, PRIV and UFID;
+- deterministic preservation, regeneration, discard/reject and padding
+  policies;
+- complete tag serialization with physical tag-size derivation;
+- whole-tag unsynchronisation writing, including terminal-FF handling;
+- extended-header CRC validation;
+- CRC regeneration after logical frame changes;
+- parse → write → parse coverage for ordinary, unsynchronised and
+  CRC-bearing tags.
+
+Still pending in the ID3 version family:
+
+- broader ID3v2.3 canonical coverage as further native frame codecs are
+  added;
+- compression and encryption transformation support;
+- explicit native insertion-point control for newly introduced frames;
 - ID3v2.2 frame IDs/framing;
 - ID3v1;
 - version conversion through the canonical model.
 
-The common semantic codecs should be reused; version-specific framing must remain separate.
+The common semantic codecs should be reused; version-specific framing
+must remain separate.
 
 ## Phase 7 — Vorbis Comments and native FLAC
 

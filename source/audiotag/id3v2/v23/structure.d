@@ -16,8 +16,10 @@ Tag-level unsynchronisation is reversed only while traversing already
 bounded physical tag-body regions. Raw physical source representation
 and absolute offsets remain available throughout the structure.
 
-Extended-header CRC data is parsed structurally but the CRC checksum
-itself is not yet verified against the frame sequence.
+Extended-header CRC data is parsed structurally. Optional checksum
+verification against the logical/native frame sequence is exposed
+separately through `validateId3v23TagCrc()` and
+`Id3v23CanonicalTag.validateCrc()`.
 
 Parsing is atomic: any structural failure leaves the caller's cursor
 unchanged.

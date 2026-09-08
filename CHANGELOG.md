@@ -21,6 +21,11 @@ The project intends to follow Semantic Versioning once release versions begin.
 - ID3v2.4 writer planning with preservation, regeneration, discard and reject actions.
 - Complete ID3v2.4 tag serialization with source-order preservation and padding policy.
 - Deterministic ID3v2.4 writers and complete tag roundtrip coverage for T***, W***, TXXX, WXXX, COMM, USLT, APIC, PRIV and UFID.
+- Strict bounded ID3v2.3 structural parsing with extended headers, frame-format additions, padding and whole-tag unsynchronisation.
+- Provenance-aware ID3v2.3 canonical readers and writers for T***, W***, TXXX, WXXX, COMM, USLT, APIC, PRIV and UFID.
+- Complete ID3v2.3 tag serialization with preservation, regeneration, discard/reject, logical padding and whole-tag unsynchronisation policies.
+- ID3v2.3 extended-header CRC validation and CRC regeneration after logical frame changes.
+- ID3v2.3 parse → write → parse coverage for ordinary, unsynchronised and CRC-bearing tags.
 
 ### Changed
 
