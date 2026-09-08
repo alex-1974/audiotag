@@ -11,7 +11,8 @@ Currently executable canonical target families:
 - user-defined text (`TXXX`);
 - user-defined URL (`WXXX`);
 - language-qualified text (`COMM`/`USLT`);
-- private binary data (`PRIV`).
+- private binary data (`PRIV`);
+- unique file identifiers (`UFID`).
 
 Other semantically valid target families remain explicit
 `unsupportedRepresentation` results until their complete native frame
@@ -85,6 +86,10 @@ import audiotag.id3v2.v23.language_text_frame_write :
 import audiotag.id3v2.v23.private_frame_write :
     serializeNewId3v23PrivateFrame,
     serializeRegeneratedId3v23PrivateFrame;
+
+import audiotag.id3v2.v23.unique_file_identifier_frame_write :
+    serializeNewId3v23UniqueFileIdentifierFrame,
+    serializeRegeneratedId3v23UniqueFileIdentifierFrame;
 
 
 /++
@@ -487,6 +492,18 @@ serializeId3v23PlannedRegeneration(
             break;
         }
 
+        case Id3v23CanonicalTargetFamily
+            .uniqueFileIdentifier:
+        {
+            serialized =
+                serializeRegeneratedId3v23UniqueFileIdentifierFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -698,6 +715,15 @@ serializeId3v23PlannedNewFrame(
                     ]
                 );
 
+        case Id3v23CanonicalTargetFamily
+            .uniqueFileIdentifier:
+            return
+                serializeNewId3v23UniqueFileIdentifierFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
         default:
             return
                 SerializationResult!(ubyte[])
@@ -863,6 +889,43 @@ version (unittest)
         auto result =
             MetadataField(
                 MetadataKey("privateData"),
+                wrapped
+            );
+
+        result.qualifiers =
+            [
+                MetadataQualifier(
+                    "owner",
+                    owner
+                )
+            ];
+
+        return result;
+    }
+
+
+    private MetadataField uniqueFileIdentifierField(
+        string owner,
+        const(ubyte)[] identifier
+    )
+        @safe
+    {
+        import audiotag.metadata.field :
+            MetadataQualifier;
+
+        import audiotag.metadata.value :
+            MetadataBinary;
+
+        MetadataValue wrapped =
+            MetadataBinary.copyFrom(
+                identifier
+            );
+
+        auto result =
+            MetadataField(
+                MetadataKey(
+                    "uniqueFileIdentifier"
+                ),
                 wrapped
             );
 
@@ -1705,6 +1768,146 @@ unittest
 }
 
 
+/// A planned new UFID field dispatches through the v2.3 identifier serializer.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        uniqueFileIdentifierField(
+            "owner",
+            [
+                cast(ubyte) 0x11,
+                cast(ubyte) 0x00,
+                cast(ubyte) 0xFF
+            ]
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'U', 'F', 'I', 'D',
+            0x00, 0x00, 0x00, 0x09,
+            0x00, 0x00,
+
+            'o', 'w', 'n', 'e', 'r',
+            0x00,
+
+            0x11,
+            0x00,
+            0xFF
+        ]
+    );
+}
+
+
+/// A modified mapped UFID frame dispatches to identifier regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'U', 'F', 'I', 'D',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            'o', 'w', 'n', 'e', 'r',
+            0x00,
+            0x01,
+            0x02
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            uniqueFileIdentifierField(
+                "owner",
+                [
+                    cast(ubyte) 0x01,
+                    cast(ubyte) 0x02
+                ]
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        uniqueFileIdentifierField(
+            "new-owner",
+            [
+                cast(ubyte) 0xAA,
+                cast(ubyte) 0x00
+            ]
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+    assert(executed.value.hasValue);
+
+    assert(
+        executed.value.value ==
+        [
+            'U', 'F', 'I', 'D',
+            0x00, 0x00, 0x00, 0x0C,
+            0x00, 0x00,
+
+            'n', 'e', 'w', '-', 'o', 'w', 'n', 'e', 'r',
+            0x00,
+
+            0xAA,
+            0x00
+        ]
+    );
+}
+
+
 /// Semantically writable still-unsupported target families remain explicit failures.
 unittest
 {
@@ -1720,24 +1923,36 @@ unittest
         MetadataQualifier;
 
     import audiotag.metadata.value :
-        MetadataBinary;
+        MetadataBinary,
+        MetadataPicture,
+        MetadataPictureSource;
+
+    MetadataPictureSource pictureSource =
+        MetadataBinary.copyFrom(
+            [
+                cast(ubyte) 0xFF,
+                cast(ubyte) 0xD8
+            ],
+            "image/jpeg"
+        );
 
     MetadataValue wrapped =
-        MetadataBinary.copyFrom(
-            [cast(ubyte) 0x01]
+        MetadataPicture(
+            "Cover",
+            pictureSource
         );
 
     auto field =
         MetadataField(
-            MetadataKey("uniqueFileIdentifier"),
+            MetadataKey("artwork"),
             wrapped
         );
 
     field.qualifiers =
         [
             MetadataQualifier(
-                "owner",
-                "example.invalid/ufid"
+                "pictureRole",
+                "frontCover"
             )
         ];
 
@@ -1751,8 +1966,8 @@ unittest
         );
 
     /*
-     * The semantic planner supports UFID. This physical executor does not
-     * yet have the complete v2.3 unique-file-identifier frame writer.
+     * The semantic planner supports APIC. This physical executor does not
+     * yet have the complete v2.3 attached-picture frame writer.
      */
     assert(plan.writable);
     assert(plan.newFrameCount == 1);
