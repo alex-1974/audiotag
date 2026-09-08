@@ -33,6 +33,9 @@ import audiotag.core.serialization :
     SerializationErrorCode,
     SerializationResult;
 
+import audiotag.id3v2.v23.crc_write :
+    computeId3v23FrameCrc32;
+
 import audiotag.id3v2.v23.extended_header_write :
     serializeRegeneratedId3v23ExtendedHeader;
 
@@ -109,7 +112,8 @@ serializeId3v23TagBody(
         {
             if (
                 source.body.hasExtendedHeader ||
-                plan.extendedHeaderLength != 0
+                plan.extendedHeaderLength != 0 ||
+                plan.recomputeCrc
             )
             {
                 return
@@ -133,7 +137,8 @@ serializeId3v23TagBody(
             if (
                 !source.body.hasExtendedHeader ||
                 source.envelope.header
-                    .unsynchronisation
+                    .unsynchronisation ||
+                plan.recomputeCrc
             )
             {
                 return
@@ -198,12 +203,43 @@ serializeId3v23TagBody(
             /*
              * `plan.logicalBodyLength` is bounded to 28 bits, therefore
              * the resulting padding length necessarily fits in uint.
+             *
+             * A changed CRC-bearing frame sequence is checksummed in the
+             * logical/native domain before whole-tag unsynchronisation.
              */
+            uint resultingCrc32 =
+                source.body.extendedHeader
+                    .crc32;
+
+            if (plan.recomputeCrc)
+            {
+                if (
+                    !source.body.extendedHeader
+                        .hasCrc
+                )
+                {
+                    return
+                        SerializationResult!(ubyte[])
+                            .failure(
+                                SerializationError(
+                                    SerializationErrorCode
+                                        .inconsistentStructure
+                                )
+                            );
+                }
+
+                resultingCrc32 =
+                    computeId3v23FrameCrc32(
+                        frameSequence
+                    );
+            }
+
             auto regenerated =
                 serializeRegeneratedId3v23ExtendedHeader(
                     source.body.extendedHeader,
                     cast(uint)
-                        plan.paddingLength
+                        plan.paddingLength,
+                    resultingCrc32
                 );
 
             if (regenerated.hasError)
@@ -665,7 +701,7 @@ unittest
         );
 
     assert(plan.writable);
-    assert(!plan.crcBlocksChange);
+    assert(!plan.recomputeCrc);
 
     auto serialized =
         serializeId3v23TagBody(
@@ -683,7 +719,7 @@ unittest
 }
 
 
-/// A stale CRC plan never reaches physical body output.
+/// A changed CRC-bearing body receives a freshly calculated checksum.
 unittest
 {
     const ubyte[] sourceBytes =
@@ -692,6 +728,7 @@ unittest
             0x03, 0x00,
             0x40,
 
+            // 14 extended + 11 frame + 2 padding = 27.
             0x00, 0x00, 0x00, 0x1B,
 
             0x00, 0x00, 0x00, 0x0A,
@@ -725,8 +762,21 @@ unittest
             true
         );
 
-    assert(!plan.writable);
-    assert(plan.crcBlocksChange);
+    assert(plan.writable);
+    assert(plan.recomputeCrc);
+
+    assert(
+        plan.extendedHeaderAction ==
+        Id3v23ExtendedHeaderWriteAction
+            .regenerate
+    );
+
+    /*
+     * Original logical frames-plus-padding capacity is thirteen bytes.
+     * Twelve resulting frame bytes therefore leave one padding byte.
+     */
+    assert(plan.paddingLength == 1);
+    assert(plan.logicalBodyLength == 27);
 
     auto serialized =
         serializeId3v23TagBody(
@@ -735,13 +785,51 @@ unittest
             frameSequence
         );
 
-    assert(serialized.hasError);
+    assert(serialized.hasValue);
+
+    auto extendedCursor =
+        Id3v23DataCursor(
+            ByteSpan(
+                serialized.value[0 .. 14]
+            ),
+            false
+        );
+
+    auto extended =
+        extendedCursor
+            .parseId3v23ExtendedHeader();
+
+    assert(extended.hasValue);
+    assert(extendedCursor.empty);
+
+    assert(extended.value.hasCrc);
+    assert(extended.value.paddingSize == 1);
+
+    const expectedCrc =
+        computeId3v23FrameCrc32(
+            frameSequence
+        );
 
     assert(
-        serialized.error.code ==
-        SerializationErrorCode
-            .unsupportedRepresentation
+        extended.value.crc32 ==
+        expectedCrc
     );
+
+    assert(
+        extended.value.crc32 !=
+        source.body.extendedHeader
+            .crc32
+    );
+
+    assert(
+        serialized.value[
+            14 ..
+            14 + frameSequence.length
+        ] ==
+        frameSequence
+    );
+
+    assert(serialized.value[$ - 1] == 0x00);
 }
 
 

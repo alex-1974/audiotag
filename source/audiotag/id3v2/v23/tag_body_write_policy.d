@@ -20,8 +20,8 @@ Extended header:
   padding-size value remains correct;
 - when the resulting padding size changes, a non-CRC extended header
   must be regenerated with the new padding-size value;
-- an existing CRC blocks a changed frame sequence until CRC generation
-  is implemented.
+- an existing CRC is recomputed whenever the logical/native frame
+  sequence changes.
 
 Whole-tag unsynchronisation:
 - source stuffing is treated as physical provenance and excluded from
@@ -113,7 +113,7 @@ enum Id3v23ExtendedHeaderWriteAction : ubyte
     /// Copy the complete original extended-header bytes unchanged.
     preserveOriginal,
 
-    /// Re-encode the existing structural form with a new padding size.
+    /// Re-encode the existing structural form with updated values.
     regenerate
 }
 
@@ -149,8 +149,8 @@ struct Id3v23TagBodyWritePlan
     +/
     size_t logicalBodyLength;
 
-    /// A source CRC would become stale after frame-sequence modification.
-    bool crcBlocksChange;
+    /// Whether an existing CRC must be recomputed for changed frames.
+    bool recomputeCrc;
 
 
     /++
@@ -162,8 +162,7 @@ struct Id3v23TagBodyWritePlan
     {
         return
             status ==
-                Id3v23TagBodyWriteStatus.ready &&
-            !crcBlocksChange;
+                Id3v23TagBodyWriteStatus.ready;
     }
 }
 
@@ -312,10 +311,15 @@ planId3v23TagBodyWrite(
         {
             /*
              * The existing checksum belongs to the source frame
-             * sequence. Do not emit it after semantic/native changes
-             * until CRC generation exists.
+             * sequence. A changed logical/native sequence therefore
+             * requires both checksum recalculation and extended-header
+             * regeneration.
              */
-            result.crcBlocksChange = true;
+            result.recomputeCrc = true;
+
+            result.extendedHeaderAction =
+                Id3v23ExtendedHeaderWriteAction
+                    .regenerate;
         }
     }
     else
@@ -651,7 +655,7 @@ unittest
 }
 
 
-/// A changed sequence makes an existing v2.3 CRC explicitly stale.
+/// A changed sequence requires v2.3 CRC regeneration.
 unittest
 {
     const ubyte[] bytes =
@@ -708,13 +712,13 @@ unittest
         Id3v23TagBodyWriteStatus.ready
     );
 
-    assert(plan.crcBlocksChange);
-    assert(!plan.writable);
+    assert(plan.recomputeCrc);
+    assert(plan.writable);
 
     assert(
         plan.extendedHeaderAction ==
         Id3v23ExtendedHeaderWriteAction
-            .preserveOriginal
+            .regenerate
     );
 }
 
@@ -754,7 +758,7 @@ unittest
         );
 
     assert(plan.writable);
-    assert(!plan.crcBlocksChange);
+    assert(!plan.recomputeCrc);
 
     assert(
         plan.extendedHeaderAction ==

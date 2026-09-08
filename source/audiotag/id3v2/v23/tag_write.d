@@ -15,7 +15,6 @@ No container/file update is performed here.
 
 Current lower-layer limitations remain explicit, including:
 
-- changed CRC-bearing extended headers are rejected;
 - only currently implemented canonical frame serializer families are
   writable.
 
@@ -108,8 +107,8 @@ tag and edit operation.
 The function does not require a caller-supplied change indicator.
 After frame-sequence execution it compares the logical/native output
 with the source frame sequence reconstructed in the same logical domain.
-This comparison determines whether an existing extended-header CRC would
-become stale and whether body padding must be adjusted.
+This comparison determines whether an existing extended-header CRC must
+be regenerated and whether body padding must be adjusted.
 
 The source revision and defined header flags are retained. `tagSize` is
 recomputed from the resulting physical body.
@@ -552,6 +551,9 @@ serializeId3v23PlannedTag(
 
 version (unittest)
 {
+    import audiotag.id3v2.v23.crc_write :
+        computeId3v23FrameCrc32;
+
     import audiotag.core.cursor :
         ByteCursor;
 
@@ -1761,7 +1763,7 @@ unittest
 }
 
 
-/// A logical frame change still invalidates an unsynchronised source CRC.
+/// A logical frame change regenerates an unsynchronised source CRC.
 unittest
 {
     /*
@@ -1871,7 +1873,7 @@ unittest
      * second native frame.
      *
      * Keep the replacement the same length so this test isolates CRC
-     * invalidation rather than body-capacity changes.
+     * regeneration rather than body-capacity changes.
      */
     edit.replaceSourceField(
         0,
@@ -1889,8 +1891,8 @@ unittest
         );
 
     /*
-     * Semantic/native planning itself is valid. The later body policy is
-     * responsible for rejecting reuse of a stale source CRC.
+     * Semantic/native planning is valid. The body policy must recognize
+     * the logical frame change and regenerate the existing CRC.
      */
     assert(plan.writable);
 
@@ -1903,11 +1905,51 @@ unittest
         );
 
     assert(written.hasValue);
-    assert(written.value.hasError);
+    assert(written.value.hasValue);
+
+    const reparsed =
+        parseTestTag(
+            written.value.value
+        );
 
     assert(
-        written.value.error.code ==
-        SerializationErrorCode
-            .unsupportedRepresentation
+        reparsed.body.extendedHeader
+            .hasCrc
     );
+
+    auto logicalFrames =
+        materializeLogicalSourceFrameSequence(
+            reparsed
+        );
+
+    assert(logicalFrames.hasValue);
+
+    const expectedCrc =
+        computeId3v23FrameCrc32(
+            logicalFrames.value
+        );
+
+    assert(
+        reparsed.body.extendedHeader
+            .crc32 ==
+        expectedCrc
+    );
+
+    /*
+     * This fixture deliberately starts with a synthetic source checksum,
+     * so successful regeneration must not simply copy it.
+     */
+    assert(expectedCrc != 0x1234_5678);
+
+    /*
+     * The preserved first frame still contains logical FF E1, therefore
+     * the complete resulting body still requires whole-tag
+     * unsynchronisation after CRC calculation.
+     */
+    assert(
+        reparsed.envelope.header
+            .unsynchronisation
+    );
+
+    assert(reparsed.frames.padding.empty);
 }
