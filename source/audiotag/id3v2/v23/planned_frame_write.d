@@ -11,6 +11,7 @@ Currently executable canonical target families:
 - user-defined text (`TXXX`);
 - user-defined URL (`WXXX`);
 - language-qualified text (`COMM`/`USLT`);
+- attached pictures (`APIC`);
 - private binary data (`PRIV`);
 - unique file identifiers (`UFID`).
 
@@ -82,6 +83,10 @@ import audiotag.id3v2.v23.user_url_frame_write :
 import audiotag.id3v2.v23.language_text_frame_write :
     serializeNewId3v23LanguageTextFrame,
     serializeRegeneratedId3v23LanguageTextFrame;
+
+import audiotag.id3v2.v23.attached_picture_frame_write :
+    serializeNewId3v23AttachedPictureFrame,
+    serializeRegeneratedId3v23AttachedPictureFrame;
 
 import audiotag.id3v2.v23.private_frame_write :
     serializeNewId3v23PrivateFrame,
@@ -481,6 +486,18 @@ serializeId3v23PlannedRegeneration(
         }
 
         case Id3v23CanonicalTargetFamily
+            .attachedPicture:
+        {
+            serialized =
+                serializeRegeneratedId3v23AttachedPictureFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
+        case Id3v23CanonicalTargetFamily
             .privateData:
         {
             serialized =
@@ -701,6 +718,15 @@ serializeId3v23PlannedNewFrame(
             .languageText:
             return
                 serializeNewId3v23LanguageTextFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
+        case Id3v23CanonicalTargetFamily
+            .attachedPicture:
+            return
+                serializeNewId3v23AttachedPictureFrame(
                     newFields[
                         newFramePlan.newFieldIndex
                     ]
@@ -934,6 +960,52 @@ version (unittest)
                 MetadataQualifier(
                     "owner",
                     owner
+                )
+            ];
+
+        return result;
+    }
+
+
+    private MetadataField embeddedPictureField(
+        string role,
+        string description,
+        string mimeType,
+        const(ubyte)[] data
+    )
+        @safe
+    {
+        import audiotag.metadata.field :
+            MetadataQualifier;
+
+        import audiotag.metadata.value :
+            MetadataBinary,
+            MetadataPicture,
+            MetadataPictureSource;
+
+        MetadataPictureSource pictureSource =
+            MetadataBinary.copyFrom(
+                data,
+                mimeType
+            );
+
+        MetadataValue wrapped =
+            MetadataPicture(
+                description,
+                pictureSource
+            );
+
+        auto result =
+            MetadataField(
+                MetadataKey("artwork"),
+                wrapped
+            );
+
+        result.qualifiers =
+            [
+                MetadataQualifier(
+                    "pictureRole",
+                    role
                 )
             ];
 
@@ -1908,7 +1980,7 @@ unittest
 }
 
 
-/// Semantically writable still-unsupported target families remain explicit failures.
+/// A planned new APIC field dispatches through the v2.3 picture serializer.
 unittest
 {
     const projection =
@@ -1919,44 +1991,17 @@ unittest
             projection.metadata
         );
 
-    import audiotag.metadata.field :
-        MetadataQualifier;
-
-    import audiotag.metadata.value :
-        MetadataBinary,
-        MetadataPicture,
-        MetadataPictureSource;
-
-    MetadataPictureSource pictureSource =
-        MetadataBinary.copyFrom(
+    edit.appendNewField(
+        embeddedPictureField(
+            "frontCover",
+            "Front",
+            "image/jpeg",
             [
                 cast(ubyte) 0xFF,
                 cast(ubyte) 0xD8
-            ],
-            "image/jpeg"
-        );
-
-    MetadataValue wrapped =
-        MetadataPicture(
-            "Cover",
-            pictureSource
-        );
-
-    auto field =
-        MetadataField(
-            MetadataKey("artwork"),
-            wrapped
-        );
-
-    field.qualifiers =
-        [
-            MetadataQualifier(
-                "pictureRole",
-                "frontCover"
-            )
-        ];
-
-    edit.appendNewField(field);
+            ]
+        )
+    );
 
     const plan =
         planId3v23CanonicalTagWrite(
@@ -1965,10 +2010,6 @@ unittest
             Id3v23WriteContext.tagOnly()
         );
 
-    /*
-     * The semantic planner supports APIC. This physical executor does not
-     * yet have the complete v2.3 attached-picture frame writer.
-     */
     assert(plan.writable);
     assert(plan.newFrameCount == 1);
 
@@ -1979,12 +2020,130 @@ unittest
             0
         );
 
-    assert(serialized.hasError);
+    assert(serialized.hasValue);
 
     assert(
-        serialized.error.code ==
-        SerializationErrorCode
-            .unsupportedRepresentation
+        serialized.value ==
+        [
+            'A', 'P', 'I', 'C',
+            0x00, 0x00, 0x00, 0x15,
+            0x00, 0x00,
+
+            0x00,
+
+            'i', 'm', 'a', 'g', 'e', '/',
+            'j', 'p', 'e', 'g',
+            0x00,
+
+            0x03,
+
+            'F', 'r', 'o', 'n', 't',
+            0x00,
+
+            0xFF,
+            0xD8
+        ]
+    );
+}
+
+
+/// A modified mapped APIC frame dispatches to picture regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'A', 'P', 'I', 'C',
+            0x00, 0x00, 0x00, 0x10,
+            0x00, 0x00,
+
+            0x00,
+
+            'i', 'm', 'a', 'g', 'e', '/',
+            'j', 'p', 'e', 'g',
+            0x00,
+
+            0x03,
+
+            0x00,
+
+            0x01,
+            0x02
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            embeddedPictureField(
+                "frontCover",
+                "",
+                "image/jpeg",
+                [
+                    cast(ubyte) 0x01,
+                    cast(ubyte) 0x02
+                ]
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        embeddedPictureField(
+            "frontCover",
+            "Front",
+            "image/jpeg",
+            [
+                cast(ubyte) 0xAA,
+                cast(ubyte) 0x00
+            ]
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+    assert(executed.value.hasValue);
+
+    assert(
+        executed.value.value ==
+        [
+            'A', 'P', 'I', 'C',
+            0x00, 0x00, 0x00, 0x15,
+            0x00, 0x00,
+
+            0x00,
+
+            'i', 'm', 'a', 'g', 'e', '/',
+            'j', 'p', 'e', 'g',
+            0x00,
+
+            0x03,
+
+            'F', 'r', 'o', 'n', 't',
+            0x00,
+
+            0xAA,
+            0x00
+        ]
     );
 }
 
