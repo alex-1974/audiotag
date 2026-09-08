@@ -43,6 +43,10 @@ import audiotag.id3v2.v23.canonical_projection :
 import audiotag.id3v2.v23.canonical_sequence :
     projectId3v23FrameSequenceToCanonical;
 
+import audiotag.id3v2.v23.crc_validation :
+    Id3v23CrcValidationResult,
+    validateId3v23TagCrc;
+
 import audiotag.id3v2.v23.structure :
     Id3v23TagStructure,
     parseId3v23TagStructure;
@@ -86,6 +90,27 @@ struct Id3v23CanonicalTag
     {
         return
             structure.endOffset;
+    }
+
+
+    /++
+    Validates the optional ID3v2.3 extended-header CRC.
+
+    CRC integrity remains independent of structural parsing and semantic
+    projection. A mismatch therefore returns a validation result rather
+    than invalidating this already parsed canonical tag.
+
+    This operation traverses the complete logical/native frame sequence
+    and is intentionally a method rather than a property.
+    +/
+    Id3v23CrcValidationResult
+    validateCrc() const
+        @safe pure nothrow @nogc
+    {
+        return
+            validateId3v23TagCrc(
+                structure
+            );
     }
 }
 
@@ -213,6 +238,9 @@ parseId3v23CanonicalTag(
 
 version (unittest)
 {
+    import audiotag.id3v2.v23.crc_validation :
+        Id3v23CrcValidationStatus;
+
     import std.sumtype :
         match;
 
@@ -790,4 +818,124 @@ unittest
         cursor.remaining ==
         bytes.length
     );
+}
+
+
+
+/// Canonical tags expose CRC validation without changing parse semantics.
+unittest
+{
+    /*
+     * One twelve-byte, semantically valid TIT2 frame whose CRC-32 is
+     * 3854B80B.
+     */
+    const ubyte[] bytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+
+            // Extended header.
+            0x40,
+
+            // 14-byte extended header + 12-byte frame.
+            0x00, 0x00, 0x00, 0x1A,
+
+            // Extended-header size = 10.
+            0x00, 0x00, 0x00, 0x0A,
+
+            // CRC present.
+            0x80, 0x00,
+
+            // No padding.
+            0x00, 0x00, 0x00, 0x00,
+
+            // CRC-32 over the logical frame sequence.
+            0x38, 0x54, 0xB8, 0x0B,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            // Latin-1 encoding marker + one-character title.
+            0x00, 'U'
+        ];
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(bytes)
+        );
+
+    auto parsed =
+        parseId3v23CanonicalTag(
+            cursor
+        );
+
+    assert(parsed.hasValue);
+    assert(cursor.empty);
+
+    const validation =
+        parsed.value.validateCrc();
+
+    assert(validation.hasCrc);
+    assert(validation.verified);
+    assert(validation.storedCrc32 == 0x3854_B80B);
+    assert(validation.computedCrc32 == 0x3854_B80B);
+}
+
+
+/// CRC mismatch remains observable on an otherwise valid canonical tag.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+            0x40,
+
+            0x00, 0x00, 0x00, 0x1A,
+
+            0x00, 0x00, 0x00, 0x0A,
+            0x80, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+
+            // Deliberately stale CRC.
+            0x12, 0x34, 0x56, 0x78,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            // Latin-1 encoding marker + one-character title.
+            0x00, 'U'
+        ];
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(bytes)
+        );
+
+    auto parsed =
+        parseId3v23CanonicalTag(
+            cursor
+        );
+
+    /*
+     * CRC integrity is deliberately not part of parse success.
+     */
+    assert(parsed.hasValue);
+    assert(cursor.empty);
+
+    const validation =
+        parsed.value.validateCrc();
+
+    assert(validation.hasCrc);
+    assert(!validation.verified);
+
+    assert(
+        validation.status ==
+        Id3v23CrcValidationStatus.mismatch
+    );
+
+    assert(validation.storedCrc32 == 0x1234_5678);
+    assert(validation.computedCrc32 == 0x3854_B80B);
 }
