@@ -1,5 +1,5 @@
 /++
-Physical assembly of a planned ID3v2.3 frame sequence.
+Logical assembly of a planned ID3v2.3 frame sequence.
 
 This module executes all existing-frame actions of
 `Id3v23TagWritePlan` together:
@@ -13,15 +13,18 @@ Surviving existing frames retain original native order. Newly
 introduced canonical frames are appended afterwards in
 `Id3v23TagWritePlan.newFrames` order.
 
-The current assembler deliberately supports only source tags without
-ID3v2.3 whole-tag unsynchronisation.
+The assembler always produces one ordinary logical/native frame
+sequence.
 
-ID3v2.3 unsynchronisation belongs to the complete tag byte stream rather
-than to individual frames. Preserved frames may contain original
-physical stuffing while regenerated and new frames currently produce
-ordinary logical/native bytes. Those representations must not be mixed
-under one unsynchronised tag until whole-tag unsynchronisation writing
-exists.
+For a whole-tag-unsynchronised source:
+
+- preserved frames reconstruct their logical native bytes;
+- regenerated frames parse preserved source structure through the
+  corresponding logical unsynchronisation state;
+- newly introduced frames already produce ordinary logical/native bytes.
+
+ID3v2.3 whole-tag unsynchronisation is applied later, once, to the
+complete resulting tag body.
 
 No tag header, extended header, padding or container bytes are
 serialized here.
@@ -120,9 +123,8 @@ Params:
     projection = Original native-plus-canonical projection.
     edit = Canonical edit overlay used to construct `plan`.
     plan = Complete semantic tag-write plan.
-    sourceTagUnsynchronised = Whether the source ID3v2.3 tag used
-        whole-tag unsynchronisation. Currently only `false` is
-        supported.
+    sourceTagUnsynchronised = Whether preserved source frames were
+        parsed from an ID3v2.3 tag using whole-tag unsynchronisation.
 
 Returns:
     Complete concatenated frame bytes, an outer preserved-source parse
@@ -137,24 +139,6 @@ serializeId3v23PlannedFrameSequence(
 )
     @safe
 {
-    /*
-     * Whole-tag unsynchronisation has not yet been defined for newly
-     * assembled output.
-     *
-     * Reject before producing a mixture of preserved physical source
-     * bytes and newly generated ordinary frame bytes.
-     */
-    if (sourceTagUnsynchronised)
-    {
-        return
-            writerFailure(
-                SerializationError(
-                    SerializationErrorCode
-                        .unsupportedRepresentation
-                )
-            );
-    }
-
     if (!plan.writable)
     {
         return
@@ -259,7 +243,7 @@ serializeId3v23PlannedFrameSequence(
                         projection.frames[
                             entry.sourceFrameIndex
                         ].native.envelope,
-                        false
+                        sourceTagUnsynchronised
                     );
 
                 if (serialized.hasError)
@@ -327,7 +311,7 @@ serializeId3v23PlannedFrameSequence(
                         edit,
                         plan,
                         regenerationIndex,
-                        false
+                        sourceTagUnsynchronised
                     );
 
                 if (executed.hasError)
@@ -901,7 +885,7 @@ unittest
 }
 
 
-/// Whole-tag-unsynchronised source sequences remain blocked here.
+/// Source unsynchronisation does not block an otherwise writable sequence.
 unittest
 {
     const projection =
@@ -941,11 +925,11 @@ unittest
     auto serialized =
         assembled.value;
 
-    assert(serialized.hasError);
+    assert(serialized.hasValue);
 
-    assert(
-        serialized.error.code ==
-        SerializationErrorCode
-            .unsupportedRepresentation
-    );
+    /*
+     * Newly generated frames are ordinary logical/native bytes regardless
+     * of the source tag's former whole-tag unsynchronisation state.
+     */
+    assert(serialized.value.length != 0);
 }
