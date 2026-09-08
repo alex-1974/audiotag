@@ -6,6 +6,28 @@ The project intends to follow Semantic Versioning once release versions begin.
 
 ## [Unreleased]
 
+### Added
+
+- High-level same-version ID3v2.3 serialization API.
+- Curated public `audiotag.id3v2.v23` package API.
+- High-level same-version ID3v2.4 serialization API.
+- Curated public `audiotag.id3v2.v24` package API.
+- Curated public `audiotag.metadata` canonical metadata API.
+- Serialization result/error types through `audiotag.core`.
+
+### Changed
+
+- DUB package description now explicitly describes `audiotag` as a library.
+- Root `audiotag` package no longer re-exports the historical utility/POC API.
+- Public package structure now supports feature-oriented imports without
+  requiring unrelated tag versions, containers or conversion layers.
+
+### Removed
+
+- Historical ID3 proof-of-concept modules from the active source tree.
+- Legacy CTFE ID3 frame-registry CSV/ODS assets.
+- Legacy `-Jdata/id3` DUB string-import path.
+
 ## [0.1.0] - 2026-09-08
 
 ### Added
@@ -35,7 +57,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - DUB string-import path changed from `-J.` to `-Jdata/id3`.
 - Development direction changed from an ID3-specific proof of concept to a modular, format-independent parser architecture.
 
-### Known development issues
+### Known issues in 0.1.0
 
 - Legacy ID3 code still emits substantial debug output during `dub test`.
 - `id3v2_4_frame.d` contains a compiler deprecation caused by assigning `this.delim = delim` instead of the constructor parameter `d`.

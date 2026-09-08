@@ -2,16 +2,20 @@
 
 This roadmap describes implementation order, not release promises.
 
-## Phase 0 — Preserve the proof of concept
+## Phase 0 — Preserve and retire the proof of concept
 
-Status: largely complete.
+Status: **complete**.
 
 - initialize Git;
-- preserve original source as historical POC;
+- preserve the original implementation through Git history and the
+  `poc-initial` tag;
 - ignore local commercial music files and build artefacts;
-- move ID3 registry data under `data/id3/`;
 - establish repository documentation;
-- repair DUB string-import path after the registry move.
+- develop the replacement architecture independently of the POC;
+- remove the obsolete POC modules from the active source tree after
+  their relevant functionality has been replaced;
+- remove the legacy CTFE ID3 registry assets and string-import build
+  path once they are no longer required.
 
 ## Phase 1 — Binary parsing core
 

@@ -503,19 +503,25 @@ Future parser limits should cover:
 
 No attacker-controlled length should cause unchecked allocation.
 
-## 17. Legacy proof of concept
+## 17. Historical proof of concept
 
-The current legacy modules are retained temporarily to preserve experiments and real-world observations.
+The repository began with an experimental ID3 proof of concept.
 
-They are not the architecture to extend.
+That implementation served two purposes during the architectural
+rewrite:
 
-Known legacy behavior includes:
+- preserving early experiments and real-world observations;
+- providing a behavioral reference while the bounded parser core and
+  revision-specific codecs were developed.
 
-- direct `File` state inside ID3 frame iteration;
-- incorrect/unfinished range behavior;
-- unfinished UTF-16 handling;
-- mixed ID3v2.3/v2.4 assumptions;
-- experimental duplicate frame decoder designs;
-- debug output inside unittests.
+The proof-of-concept modules have now been removed from `main` because
+their relevant functionality has been replaced by the active
+architecture.
 
-New code should be built in the new core and gradually replace legacy functionality through small commits.
+The original implementation remains permanently recoverable through
+Git history and the `poc-initial` tag. It is historical material, not a
+supported API or an implementation layer.
+
+Active development must use the bounded `core`, canonical `metadata`
+model and format-specific codec/container modules described in this
+document.

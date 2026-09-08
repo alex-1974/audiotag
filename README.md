@@ -31,9 +31,11 @@ The current phase is **not** trying to:
 
 ## Current state
 
-The repository began as an experimental ID3 proof of concept. That
-legacy code remains isolated while the new architecture is developed
-independently.
+The repository began as an experimental ID3 proof of concept. The
+original proof-of-concept modules have now been removed from `main`
+after their relevant functionality was replaced by the bounded parser
+architecture. Their history remains available through Git and the
+`poc-initial` tag.
 
 The active implementation now includes:
 
@@ -58,9 +60,6 @@ The active implementation now includes:
 The ID3v2.3 and ID3v2.4 tag codecs do not yet constitute an MPEG/MP3
 container writer: inserting or resizing the resulting tag inside an
 audio file is a separate layer.
-
-Known legacy issues remain intentionally isolated rather than being
-fixed opportunistically during the core rewrite.
 
 ## Core design
 
@@ -107,21 +106,21 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Build
 
-The project uses DUB and currently builds as a library.
+The project uses DUB and deliberately builds as a library.
 
 ```bash
 dub build
 dub test
 ```
 
-The current DUB file uses:
+The DUB package uses:
 
 ```sdl
 targetType "library"
-dflags "-Jdata/id3"
 ```
 
-The `-Jdata/id3` path is required by the legacy CTFE string import of `id3v2-frame-id.csv`.
+No legacy string-import path or generated ID3 frame-registry asset is
+required by the active implementation.
 
 ## Tests
 
@@ -150,22 +149,17 @@ Real commercial music files under the local `music/` directory are intentionally
 ├── FORMAT_SUPPORT.md
 ├── SECURITY.md
 ├── dub.sdl
-├── data/
-│   └── id3/
-│       ├── id3v2-frame-id.csv
-│       └── id3v2-frame-id.ods
 ├── docs/
 │   └── adr/
 ├── source/
 │   └── audiotag/
 │       ├── core/
+│       ├── metadata/
 │       ├── id3v2/
+│       │   ├── common/
+│       │   ├── v23/
 │       │   └── v24/
-│       ├── id3.d
-│       ├── id3_utils.d
-│       ├── id3v2_4_frame.d
-│       ├── package.d
-│       └── utils.d
+│       └── package.d
 ├── testdata/
 │   ├── malformed/
 │   └── synthetic/

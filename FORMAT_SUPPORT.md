@@ -1,11 +1,10 @@
 # Format support
 
-This file distinguishes **implemented**, **legacy proof-of-concept**, **planned**, and **future** support.
+This file distinguishes **implemented**, **planned**, and **future** support.
 
 Legend:
 
-- **Core** — active implementation in the new architecture
-- **POC** — experimental legacy implementation; not production-ready
+- **Core** — active implementation in the current architecture
 - **Planned** — part of the intended main roadmap
 - **Future** — architecture should support it, but no near-term implementation commitment
 - **—** — not implemented
@@ -17,11 +16,11 @@ Legend:
 | MPEG Audio / MP3 | ID3v2.2 | — | — | Planned |
 | MPEG Audio / MP3 | ID3v1 | — | — | Planned |
 | MPEG Audio / MP3 | APEv2 | — | — | Planned |
-| MPEG Audio / MP3 | Lyrics3 | — | — | Lower-priority legacy support |
-| FLAC | native metadata blocks | signature POC | — | Planned |
+| MPEG Audio / MP3 | Lyrics3 | — | — | Lower-priority planned support |
+| FLAC | native metadata blocks | — | — | Planned |
 | FLAC | Vorbis Comment | — | — | Planned |
 | FLAC | PICTURE | — | — | Planned |
-| Ogg/Vorbis | Ogg container | signature POC | — | Planned |
+| Ogg/Vorbis | Ogg container | — | — | Planned |
 | Ogg/Vorbis | Vorbis Comment | — | — | Planned |
 | Ogg/Opus | Ogg container | — | — | Planned |
 | Ogg/Opus | OpusTags | — | — | Planned |
