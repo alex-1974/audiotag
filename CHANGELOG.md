@@ -8,6 +8,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 
 ### Added
 
+- Initial read-only `audiotag.mp3` prefix API for locating and bounding prepended ID3v2.3 and ID3v2.4 tags.
 - High-level same-version ID3v2.3 serialization API.
 - Curated public `audiotag.id3v2.v23` package API.
 - High-level same-version ID3v2.4 serialization API.
