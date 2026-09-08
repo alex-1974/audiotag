@@ -90,10 +90,28 @@ struct Id3v23TagBodyWritePlan
     /// Number of already serialized native frame bytes.
     size_t frameSequenceLength;
 
-    /// Number of trailing zero padding bytes to emit.
+    /// Number of trailing logical zero padding bytes to emit.
     size_t paddingLength;
 
-    /// Final ID3 header tag-size value when representable.
+    /++
+    Complete logical body length before ID3v2.3 whole-tag
+    unsynchronisation.
+
+    This includes the optional extended header, complete native frame
+    sequence and logical padding.
+
+    While whole-tag output transformation is not yet integrated,
+    `tagSize` is identical to this value.
+    +/
+    size_t logicalBodyLength;
+
+    /++
+    Final physical ID3 header tag-size value when representable.
+
+    Once whole-tag unsynchronisation output is integrated this value
+    will describe the stored physical body length and may therefore be
+    greater than `logicalBodyLength`.
+    +/
     uint tagSize;
 
     /// A source CRC would become stale after frame-sequence modification.
@@ -315,9 +333,16 @@ planId3v23TagBodyWrite(
         withoutPadding +
         result.paddingLength;
 
+    result.logicalBodyLength =
+        totalBodyLength;
+
+    /*
+     * Until whole-tag unsynchronisation is integrated into physical body
+     * serialization, logical and physical body lengths remain identical.
+     */
     result.tagSize =
         cast(uint)
-            totalBodyLength;
+            result.logicalBodyLength;
 
     return result;
 }
@@ -399,6 +424,7 @@ unittest
 
     assert(plan.frameSequenceLength == 15);
     assert(plan.paddingLength == 5);
+    assert(plan.logicalBodyLength == 20);
     assert(plan.tagSize == 20);
 }
 
@@ -434,6 +460,7 @@ unittest
 
     assert(plan.writable);
     assert(plan.paddingLength == 0);
+    assert(plan.logicalBodyLength == 25);
     assert(plan.tagSize == 25);
 }
 
@@ -471,6 +498,7 @@ unittest
 
     assert(plan.writable);
     assert(plan.paddingLength == 9);
+    assert(plan.logicalBodyLength == 20);
     assert(plan.tagSize == 20);
 }
 
@@ -539,6 +567,7 @@ unittest
 
     assert(plan.extendedHeaderLength == 10);
     assert(plan.paddingLength == 3);
+    assert(plan.logicalBodyLength == 24);
     assert(plan.tagSize == 24);
 }
 
@@ -598,6 +627,7 @@ unittest
 
     assert(plan.extendedHeaderLength == 10);
     assert(plan.paddingLength == 2);
+    assert(plan.logicalBodyLength == 24);
     assert(plan.tagSize == 24);
 }
 
@@ -715,6 +745,7 @@ unittest
 
     assert(plan.extendedHeaderLength == 14);
     assert(plan.paddingLength == 2);
+    assert(plan.logicalBodyLength == 27);
     assert(plan.tagSize == 27);
 }
 
