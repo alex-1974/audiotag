@@ -218,8 +218,25 @@ serializeId3v23PlannedTag(
      */
     assert(
         body.length ==
-        bodyPlan.tagSize
+        bodyPlan.logicalBodyLength
     );
+
+    /*
+     * The body writer currently returns the stored body directly because
+     * whole-tag unsynchronisation is still blocked.
+     *
+     * Derive the physical header size here rather than carrying it in the
+     * logical body plan. Once whole-tag unsynchronisation is integrated,
+     * this value will instead be taken from the transformed body.
+     */
+    assert(
+        body.length <=
+        0x0FFF_FFFF
+    );
+
+    const physicalTagSize =
+        cast(uint)
+            body.length;
 
     /*
      * Construct a fresh mutable output header explicitly.
@@ -231,7 +248,7 @@ serializeId3v23PlannedTag(
             0,
             source.envelope.header.revision,
             source.envelope.header.flags,
-            bodyPlan.tagSize
+            physicalTagSize
         );
 
     /*

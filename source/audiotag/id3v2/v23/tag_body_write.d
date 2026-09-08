@@ -209,8 +209,8 @@ serializeId3v23TagBody(
             }
 
             /*
-             * `plan.tagSize` is bounded to 28 bits, therefore the
-             * resulting padding length necessarily fits in uint.
+             * `plan.logicalBodyLength` is bounded to 28 bits, therefore
+             * the resulting padding length necessarily fits in uint.
              */
             auto regenerated =
                 serializeRegeneratedId3v23ExtendedHeader(
@@ -415,7 +415,6 @@ unittest
 
     assert(plan.writable);
     assert(plan.paddingLength == 5);
-    assert(plan.tagSize == 20);
 
     auto serialized =
         serializeId3v23TagBody(
@@ -589,7 +588,6 @@ unittest
     );
 
     assert(plan.paddingLength == 2);
-    assert(plan.tagSize == 24);
 
     auto serialized =
         serializeId3v23TagBody(
