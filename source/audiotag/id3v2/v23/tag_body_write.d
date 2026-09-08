@@ -1,5 +1,5 @@
 /++
-Physical serialization of a planned ID3v2.3 tag body.
+Logical serialization of a planned ID3v2.3 tag body.
 
 This module materializes an already validated `Id3v23TagBodyWritePlan`.
 
@@ -17,9 +17,12 @@ No new policy decisions are made here.
 
 The fixed ten-byte ID3 tag header is not part of this output.
 
-ID3v2.3 whole-tag unsynchronisation is likewise not applied here. The
-current body policy rejects such output before serialization reaches
-this layer.
+ID3v2.3 whole-tag unsynchronisation is deliberately not applied here.
+This writer materializes the complete logical body that a later
+whole-tag transformation may convert into the stored physical body.
+
+The current body policy still rejects unsynchronised source tags until
+that outer transformation is integrated.
 +/
 module audiotag.id3v2.v23.tag_body_write;
 
@@ -54,8 +57,8 @@ Params:
     frameSequence = Complete serialized resulting native frame sequence.
 
 Returns:
-    Owned ordinary ID3v2.3 tag-body bytes or a structured serialization
-    failure.
+    Owned logical ID3v2.3 tag-body bytes before whole-tag
+    unsynchronisation, or a structured serialization failure.
 +/
 SerializationResult!(ubyte[])
 serializeId3v23TagBody(
@@ -261,7 +264,7 @@ serializeId3v23TagBody(
 
     if (
         totalLength !=
-        cast(ulong) plan.tagSize
+        cast(ulong) plan.logicalBodyLength
     )
     {
         return
@@ -272,7 +275,7 @@ serializeId3v23TagBody(
                             .inconsistentStructure,
                         0,
                         totalLength,
-                        plan.tagSize
+                        plan.logicalBodyLength
                     )
                 );
     }
