@@ -14,10 +14,14 @@ No container/file update is performed here.
 
 Current lower-layer limitations remain explicit, including:
 
-- whole-tag unsynchronisation writing is not implemented;
+- whole-tag-unsynchronised source tags are not yet writable because
+  preserved source frames cannot yet be reconstructed independently;
 - changed CRC-bearing extended headers are rejected;
 - only currently implemented canonical frame serializer families are
   writable.
+
+For ordinary source tags, whole-tag unsynchronisation is applied to the
+complete resulting logical body whenever required by ID3v2.3.
 
 The outer result preserves parser errors that can occur while recovering
 structural information from a preserved native frame during regeneration.
@@ -53,6 +57,7 @@ import audiotag.id3v2.v23.tag_body_write :
 
 import audiotag.id3v2.v23.tag_body_write_policy :
     Id3v23ExtendedHeaderWriteAction,
+    Id3v23TagBodyWritePlan,
     planId3v23TagBodyWrite;
 
 import audiotag.id3v2.v23.tag_header_write :
@@ -60,6 +65,10 @@ import audiotag.id3v2.v23.tag_header_write :
 
 import audiotag.id3v2.v23.tag_write_plan :
     Id3v23TagWritePlan;
+
+import audiotag.id3v2.v23.unsync_write :
+    requiresId3v23Unsynchronisation,
+    serializeId3v23UnsynchronisedBytes;
 
 
 /++
@@ -187,7 +196,7 @@ serializeId3v23PlannedTag(
         frameSequence !=
         source.frames.frameBytes.data;
 
-    const bodyPlan =
+    Id3v23TagBodyWritePlan bodyPlan =
         planId3v23TagBodyWrite(
             source,
             frameSequence.length,
@@ -209,34 +218,168 @@ serializeId3v23PlannedTag(
             );
     }
 
-    const body =
+    const(ubyte)[] logicalBody =
         bodyResult.value;
 
-    /*
-     * The body serializer already validates this relationship. Retain it
-     * here as the central outer-tag representation invariant.
-     */
     assert(
-        body.length ==
+        logicalBody.length ==
         bodyPlan.logicalBodyLength
     );
 
     /*
-     * The body writer currently returns the stored body directly because
-     * whole-tag unsynchronisation is still blocked.
+     * ID3v2.3 activates whole-tag unsynchronisation only when the
+     * resulting logical body contains a false MPEG synchronisation.
      *
-     * Derive the physical header size here rather than carrying it in the
-     * logical body plan. Once whole-tag unsynchronisation is integrated,
-     * this value will instead be taken from the transformed body.
+     * Once active, the transformation is applied to the complete body,
+     * including extended-header bytes, frame headers, frame payloads and
+     * padding boundaries.
      */
-    assert(
-        body.length <=
+    const unsynchronisationRequired =
+        requiresId3v23Unsynchronisation(
+            logicalBody
+        );
+
+    /*
+     * ID3v2.3 requires at least one padding byte when unsynchronisation is
+     * needed elsewhere and the logical tag would otherwise end in FF.
+     *
+     * This must be real logical padding, not merely an inserted stuffing
+     * byte. If an extended header exists, its stored padding-size field
+     * must therefore be regenerated as well.
+     */
+    if (
+        unsynchronisationRequired &&
+        logicalBody.length != 0 &&
+        logicalBody[$ - 1] == 0xFF &&
+        bodyPlan.paddingLength == 0
+    )
+    {
+        if (
+            bodyPlan.logicalBodyLength >=
+            0x0FFF_FFFF
+        )
+        {
+            return
+                writerFailure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .valueOutOfRange,
+                        6,
+                        bodyPlan.logicalBodyLength + 1,
+                        0x0FFF_FFFF
+                    )
+                );
+        }
+
+        ++bodyPlan.paddingLength;
+        ++bodyPlan.logicalBodyLength;
+
+        if (
+            bodyPlan.extendedHeaderAction !=
+            Id3v23ExtendedHeaderWriteAction.absent
+        )
+        {
+            bodyPlan.extendedHeaderAction =
+                Id3v23ExtendedHeaderWriteAction
+                    .regenerate;
+        }
+
+        auto adjustedBodyResult =
+            serializeId3v23TagBody(
+                source,
+                bodyPlan,
+                frameSequence
+            );
+
+        if (adjustedBodyResult.hasError)
+        {
+            return
+                writerFailure(
+                    adjustedBodyResult.error
+                );
+        }
+
+        logicalBody =
+            adjustedBodyResult.value;
+
+        assert(
+            logicalBody.length ==
+            bodyPlan.logicalBodyLength
+        );
+
+        assert(
+            logicalBody[$ - 1] ==
+            0x00
+        );
+    }
+
+    const(ubyte)[] body;
+
+    if (unsynchronisationRequired)
+    {
+        auto unsynchronised =
+            serializeId3v23UnsynchronisedBytes(
+                logicalBody
+            );
+
+        if (unsynchronised.hasError)
+        {
+            return
+                writerFailure(
+                    unsynchronised.error
+                );
+        }
+
+        body =
+            unsynchronised.value;
+    }
+    else
+    {
+        body =
+            logicalBody;
+    }
+
+    /*
+     * tagSize describes the physical stored body after whole-tag
+     * unsynchronisation.
+     */
+    if (
+        body.length >
         0x0FFF_FFFF
-    );
+    )
+    {
+        return
+            writerFailure(
+                SerializationError(
+                    SerializationErrorCode
+                        .valueOutOfRange,
+                    6,
+                    body.length,
+                    0x0FFF_FFFF
+                )
+            );
+    }
 
     const physicalTagSize =
         cast(uint)
             body.length;
+
+    ubyte outputFlags =
+        cast(ubyte)
+            (
+                source.envelope.header.flags &
+                0x7F
+            );
+
+    if (unsynchronisationRequired)
+    {
+        outputFlags =
+            cast(ubyte)
+                (
+                    outputFlags |
+                    0x80
+                );
+    }
 
     /*
      * Construct a fresh mutable output header explicitly.
@@ -247,7 +390,7 @@ serializeId3v23PlannedTag(
         Id3v23Header(
             0,
             source.envelope.header.revision,
-            source.envelope.header.flags,
+            outputFlags,
             physicalTagSize
         );
 
@@ -263,24 +406,6 @@ serializeId3v23PlannedTag(
         outputHeader.hasExtendedHeader !=
         extendedHeaderPresent
     )
-    {
-        return
-            writerFailure(
-                SerializationError(
-                    SerializationErrorCode
-                        .inconsistentStructure,
-                    5,
-                    outputHeader.flags
-                )
-            );
-    }
-
-    /*
-     * Whole-tag unsynchronisation should already have been rejected by
-     * the sequence/body layers. Reaching this point with the flag set
-     * would mean the supplied planning/execution layers disagree.
-     */
-    if (outputHeader.unsynchronisation)
     {
         return
             writerFailure(
@@ -911,5 +1036,473 @@ unittest
         serialized.error.code ==
         SerializationErrorCode
             .inconsistentStructure
+    );
+}
+
+
+
+/// A false MPEG synchronisation activates whole-tag unsynchronisation.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+            0x00,
+
+            // One 13-byte frame.
+            0x00, 0x00, 0x00, 0x0D,
+
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0x10,
+            0xFF, 0xE1
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        nativeFromEnvelope(
+            onlySourceFrame(source)
+        ),
+        Id3v23CanonicalMappingResult
+            .unsupported()
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+
+    auto written =
+        serializeId3v23PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+    assert(written.value.hasValue);
+
+    assert(
+        written.value.value ==
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+
+            // Whole-tag unsynchronisation.
+            0x80,
+
+            // Physical body grew from 13 to 14 bytes.
+            0x00, 0x00, 0x00, 0x0E,
+
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0x10,
+            0xFF, 0x00, 0xE1
+        ]
+    );
+
+    const reparsed =
+        parseTestTag(
+            written.value.value
+        );
+
+    assert(
+        reparsed.envelope.header
+            .unsynchronisation
+    );
+
+    assert(
+        reparsed.envelope.header
+            .tagSize ==
+        14
+    );
+
+    assert(reparsed.frameCount == 1);
+    assert(reparsed.frames.padding.empty);
+}
+
+
+/// FF 00 alone does not activate whole-tag unsynchronisation.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+            0x00,
+
+            0x00, 0x00, 0x00, 0x0C,
+
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0xFF, 0x00
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        nativeFromEnvelope(
+            onlySourceFrame(source)
+        ),
+        Id3v23CanonicalMappingResult
+            .unsupported()
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    auto written =
+        serializeId3v23PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+    assert(written.value.hasValue);
+
+    assert(
+        written.value.value ==
+        sourceBytes
+    );
+}
+
+
+/// Active whole-tag unsynchronisation also protects logical FF 00 data.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+            0x00,
+
+            0x00, 0x00, 0x00, 0x0E,
+
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+
+            0xFF, 0xE1,
+            0xFF, 0x00
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        nativeFromEnvelope(
+            onlySourceFrame(source)
+        ),
+        Id3v23CanonicalMappingResult
+            .unsupported()
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    auto written =
+        serializeId3v23PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+    assert(written.value.hasValue);
+
+    const serialized =
+        written.value.value;
+
+    assert(serialized[5] == 0x80);
+
+    /*
+     * Two stuffing bytes were inserted:
+     *
+     *   FF E1 -> FF 00 E1
+     *   FF 00 -> FF 00 00
+     */
+    assert(
+        serialized[6 .. 10] ==
+        [0x00, 0x00, 0x00, 0x10]
+    );
+
+    const reparsed =
+        parseTestTag(serialized);
+
+    assert(reparsed.frameCount == 1);
+    assert(reparsed.frames.padding.empty);
+
+    auto frames =
+        reparsed.frameCursor();
+
+    auto frame =
+        frames.parseId3v23FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(frame.value.header.size == 4);
+    assert(frames.empty);
+}
+
+
+/// A terminal FF gains real logical padding before unsynchronisation.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+            0x00,
+
+            0x00, 0x00, 0x00, 0x0D,
+
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0xFF, 0xE1,
+            0xFF
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        nativeFromEnvelope(
+            onlySourceFrame(source)
+        ),
+        Id3v23CanonicalMappingResult
+            .unsupported()
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    auto written =
+        serializeId3v23PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+    assert(written.value.hasValue);
+
+    const serialized =
+        written.value.value;
+
+    assert(serialized[5] == 0x80);
+
+    /*
+     * Logical body:
+     *
+     *   13 frame bytes + 1 padding byte = 14
+     *
+     * Two stuffing bytes are then inserted physically.
+     */
+    assert(
+        serialized[6 .. 10] ==
+        [0x00, 0x00, 0x00, 0x10]
+    );
+
+    assert(
+        serialized[$ - 6 .. $] ==
+        [
+            0xFF, 0x00, 0xE1,
+            0xFF, 0x00,
+            0x00
+        ]
+    );
+
+    const reparsed =
+        parseTestTag(serialized);
+
+    assert(
+        reparsed.envelope.header
+            .tagSize ==
+        16
+    );
+
+    assert(
+        reparsed.frames.padding.length ==
+        1
+    );
+
+    assert(
+        reparsed.frames.frameBytes.length ==
+        15
+    );
+}
+
+
+/// Terminal-padding insertion regenerates an existing extended header.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+
+            // Extended header.
+            0x40,
+
+            // 10-byte extended header + 13-byte frame.
+            0x00, 0x00, 0x00, 0x17,
+
+            // Extended-header size = 6.
+            0x00, 0x00, 0x00, 0x06,
+            0x00, 0x00,
+
+            // Source padding size = 0.
+            0x00, 0x00, 0x00, 0x00,
+
+            'X', '0', '0', '1',
+            0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00,
+
+            0xFF, 0xE1,
+            0xFF
+        ];
+
+    const source =
+        parseTestTag(sourceBytes);
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        nativeFromEnvelope(
+            onlySourceFrame(source)
+        ),
+        Id3v23CanonicalMappingResult
+            .unsupported()
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    auto written =
+        serializeId3v23PlannedTag(
+            source,
+            projection,
+            edit,
+            plan
+        );
+
+    assert(written.hasValue);
+    assert(written.value.hasValue);
+
+    const serialized =
+        written.value.value;
+
+    /*
+     * Extended header + unsynchronisation.
+     */
+    assert(serialized[5] == 0xC0);
+
+    /*
+     * Logical body:
+     *
+     *   10 extended-header bytes
+     *   13 frame bytes
+     *    1 padding byte
+     * = 24
+     *
+     * Two stuffing bytes -> physical size 26.
+     */
+    assert(
+        serialized[6 .. 10] ==
+        [0x00, 0x00, 0x00, 0x1A]
+    );
+
+    const reparsed =
+        parseTestTag(serialized);
+
+    assert(
+        reparsed.body.extendedHeader
+            .paddingSize ==
+        1
+    );
+
+    assert(
+        reparsed.frames.padding.length ==
+        1
+    );
+
+    assert(
+        reparsed.envelope.header
+            .tagSize ==
+        26
     );
 }
