@@ -25,13 +25,12 @@ import audiotag.id3v2.v24.canonical_mapping :
 import audiotag.id3v2.v24.canonical_projection :
     Id3v24CanonicalFrameRecord;
 
+import audiotag.id3v2.common.frame_write_plan :
+    planId3v2CanonicalFrameWrite;
+
 import audiotag.id3v2.v24.writer_policy :
-    Id3v24MappedFrameModificationAction,
-    Id3v24UnregenerableFrameAction,
     Id3v24WriteContext,
-    Id3v24WriterPolicy,
-    decideId3v24MappedFrameModificationAction,
-    decideId3v24UnregenerableFrameAction;
+    Id3v24WriterPolicy;
 
 
 /++
@@ -140,129 +139,16 @@ planId3v24CanonicalFrameWrite(
 )
     @safe pure nothrow @nogc
 {
-    Id3v24FrameWriteAction action;
-
-    final switch (record.status)
-    {
-        case Id3v24CanonicalMappingStatus.mapped:
-        {
-            final switch (mutation)
-            {
-                case Id3v24CanonicalFrameMutation.unchanged:
-                    action =
-                        Id3v24FrameWriteAction
-                            .preserveOriginal;
-                    break;
-
-                case Id3v24CanonicalFrameMutation.modified:
-                {
-                    const modificationAction =
-                        decideId3v24MappedFrameModificationAction(
-                            record.native.envelope.header
-                        );
-
-                    final switch (modificationAction)
-                    {
-                        case Id3v24MappedFrameModificationAction.regenerate:
-                            action =
-                                Id3v24FrameWriteAction
-                                    .regenerate;
-                            break;
-
-                        case Id3v24MappedFrameModificationAction.rejectWrite:
-                            action =
-                                Id3v24FrameWriteAction
-                                    .rejectWrite;
-                            break;
-                    }
-
-                    break;
-                }
-
-                case Id3v24CanonicalFrameMutation.removed:
-                {
-                    const modificationAction =
-                        decideId3v24MappedFrameModificationAction(
-                            record.native.envelope.header
-                        );
-
-                    final switch (modificationAction)
-                    {
-                        case Id3v24MappedFrameModificationAction.regenerate:
-                            action =
-                                Id3v24FrameWriteAction
-                                    .discard;
-                            break;
-
-                        case Id3v24MappedFrameModificationAction.rejectWrite:
-                            action =
-                                Id3v24FrameWriteAction
-                                    .rejectWrite;
-                            break;
-                    }
-
-                    break;
-                }
-            }
-
-            break;
-        }
-
-        case Id3v24CanonicalMappingStatus.unsupportedFrame:
-        case Id3v24CanonicalMappingStatus.requiresTransformation:
-        case Id3v24CanonicalMappingStatus.unrepresentableValueShape:
-        {
-            if (
-                mutation !=
-                Id3v24CanonicalFrameMutation.unchanged
-            )
-            {
-                action =
-                    Id3v24FrameWriteAction
-                        .rejectWrite;
-
-                break;
-            }
-
-            const preservationAction =
-                decideId3v24UnregenerableFrameAction(
-                    record.native.envelope.header,
-                    context,
-                    policy
-                );
-
-            final switch (preservationAction)
-            {
-                case Id3v24UnregenerableFrameAction.preserveOriginal:
-                    action =
-                        Id3v24FrameWriteAction
-                            .preserveOriginal;
-                    break;
-
-                case Id3v24UnregenerableFrameAction.discard:
-                    action =
-                        Id3v24FrameWriteAction
-                            .discard;
-                    break;
-
-                case Id3v24UnregenerableFrameAction.rejectWrite:
-                    action =
-                        Id3v24FrameWriteAction
-                            .rejectWrite;
-                    break;
-            }
-
-            break;
-        }
-    }
-
     return
-        Id3v24FrameWritePlan(
-            record.status,
+        planId3v2CanonicalFrameWrite!(
+            Id3v24FrameWritePlan,
+            Id3v24FrameWriteAction,
+            Id3v24CanonicalMappingStatus
+        )(
+            record,
             mutation,
-            action,
-            record.canonicalStart,
-            record.canonicalCount
+            context,
+            policy
         );
 }
 
