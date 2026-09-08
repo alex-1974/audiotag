@@ -8,7 +8,8 @@ Currently executable canonical target families:
 
 - ordinary text information (`T***`);
 - ordinary URL links (`W***`, excluding `WXXX`);
-- user-defined text (`TXXX`).
+- user-defined text (`TXXX`);
+- user-defined URL (`WXXX`).
 
 Other semantically valid target families remain explicit
 `unsupportedRepresentation` results until their complete native frame
@@ -70,6 +71,10 @@ import audiotag.id3v2.v23.url_link_frame_write :
 import audiotag.id3v2.v23.user_text_frame_write :
     serializeNewId3v23UserTextFrame,
     serializeRegeneratedId3v23UserTextFrame;
+
+import audiotag.id3v2.v23.user_url_frame_write :
+    serializeNewId3v23UserUrlFrame,
+    serializeRegeneratedId3v23UserUrlFrame;
 
 
 /++
@@ -163,8 +168,8 @@ Before physical dispatch the function verifies:
 - re-planning the replacement produces the same target;
 - the preserved source frame still yields a structural regeneration plan.
 
-At present the ordinary text-information, ordinary URL-link and
-user-defined text families are physically executable.
+At present the ordinary text-information, ordinary URL-link,
+user-defined text and user-defined URL families are physically executable.
 
 Params:
     projection = Original provenance-preserving canonical projection.
@@ -436,6 +441,18 @@ serializeId3v23PlannedRegeneration(
             break;
         }
 
+        case Id3v23CanonicalTargetFamily
+            .userUrl:
+        {
+            serialized =
+                serializeRegeneratedId3v23UserUrlFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -469,8 +486,9 @@ Executes one planned newly introduced canonical frame.
 The function validates that the supplied semantic plan still refers to
 the same canonical edit field before selecting the concrete serializer.
 
-At present the ordinary text-information, ordinary URL-link and
-user-defined text target families are physically executable.
+At present the ordinary text-information, ordinary URL-link,
+user-defined text and user-defined URL target families are physically
+executable.
 
 Params:
     edit = Canonical edit overlay used to construct `plan`.
@@ -619,6 +637,15 @@ serializeId3v23PlannedNewFrame(
                     ]
                 );
 
+        case Id3v23CanonicalTargetFamily
+            .userUrl:
+            return
+                serializeNewId3v23UserUrlFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
         default:
             return
                 SerializationResult!(ubyte[])
@@ -711,6 +738,25 @@ version (unittest)
         auto result =
             textField(
                 "userText",
+                value
+            );
+
+        result.description =
+            description;
+
+        return result;
+    }
+
+
+    private MetadataField userUrlField(
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto result =
+            urlField(
+                "userUrl",
                 value
             );
 
@@ -1145,6 +1191,133 @@ unittest
 }
 
 
+/// A planned new WXXX field dispatches through the v2.3 user-URL serializer.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        userUrlField(
+            "key",
+            "abc"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'W', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            0x00,
+            'k', 'e', 'y',
+            0x00,
+            'a', 'b', 'c'
+        ]
+    );
+}
+
+
+/// A modified mapped WXXX frame dispatches to user-URL regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'W', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            0x00,
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            userUrlField(
+                "key",
+                "old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        userUrlField(
+            "new-key",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+    assert(executed.value.hasValue);
+
+    assert(
+        executed.value.value ==
+        [
+            'W', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x0C,
+            0x00, 0x00,
+
+            0x00,
+            'n', 'e', 'w', '-', 'k', 'e', 'y',
+            0x00,
+            'n', 'e', 'w'
+        ]
+    );
+}
+
+
 /// Semantically writable still-unsupported target families remain explicit failures.
 unittest
 {
@@ -1157,13 +1330,16 @@ unittest
         );
 
     auto field =
-        urlField(
-            "userUrl",
-            "https://example.test/"
+        textField(
+            "comment",
+            "value"
         );
 
     field.description =
-        "homepage";
+        "note";
+
+    field.language =
+        typeof(field.language)("eng");
 
     edit.appendNewField(field);
 
@@ -1175,8 +1351,8 @@ unittest
         );
 
     /*
-     * The semantic planner supports WXXX. This physical executor does not
-     * yet have the complete v2.3 WXXX frame writer.
+     * The semantic planner supports COMM. This physical executor does not
+     * yet have the complete v2.3 language-text frame writer.
      */
     assert(plan.writable);
     assert(plan.newFrameCount == 1);
