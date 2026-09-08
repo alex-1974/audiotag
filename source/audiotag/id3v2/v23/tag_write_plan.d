@@ -18,13 +18,14 @@ container updating remain later steps.
 +/
 module audiotag.id3v2.v23.tag_write_plan;
 
+import audiotag.id3v2.common.tag_write_plan :
+    planId3v2CanonicalTagWrite;
+
 import audiotag.metadata.edit :
-    MetadataSourceFieldEditState,
     MetadataTreeEdit;
 
 import audiotag.metadata.edit_validation :
-    MetadataTreeEditMultiplicityResult,
-    validateMetadataTreeEditMultiplicity;
+    MetadataTreeEditMultiplicityResult;
 
 import audiotag.id3v2.v23.canonical_projection :
     Id3v23CanonicalFrameRecord,
@@ -199,7 +200,7 @@ public:
             _newFrameRejectCount == 0;
     }
 
-package:
+package(audiotag.id3v2):
     void appendRegeneration(
         Id3v23ExistingFrameRegenerationPlan plan
     )
@@ -225,98 +226,58 @@ package:
 
 
 /++
-Plans regeneration of one modified existing native frame.
+Compile-time binding of ID3v2.3 tag-write planning types and functions
+to the common ID3v2 orchestration algorithm.
 
-For the current reader mappings, one native mapped frame contributes one
-canonical field. A future mapping contributing multiple canonical
-fields requires an explicit native regeneration model and is rejected
-until that model exists.
-
-Params:
-    sourceFrameIndex = Position in the original native frame sequence.
-    record = Projection relationship of the modified native frame.
-    edit = Canonical edit overlay.
-
-Returns:
-    Explicit regeneration plan.
+The traits object is configuration only. It does not generate or replace
+the concrete revision-specific plan types.
 +/
-private Id3v23ExistingFrameRegenerationPlan
-planExistingFrameRegeneration(
-    size_t sourceFrameIndex,
-    const(Id3v23CanonicalFrameRecord) record,
-    const(MetadataTreeEdit) edit
-)
-    @safe
+private struct Id3v23TagWriteTraits
 {
-    if (record.canonicalCount != 1)
-    {
-        return
-            Id3v23ExistingFrameRegenerationPlan(
-                sourceFrameIndex,
-                record.canonicalStart,
-                Id3v23ExistingFrameRegenerationStatus
-                    .unsupportedCanonicalShape,
-                Id3v23CanonicalFieldPlan.init
-            );
-    }
+    alias CanonicalProjection =
+        Id3v23CanonicalProjection;
 
-    const canonicalSourceIndex =
-        record.canonicalStart;
+    alias CanonicalFrameRecord =
+        Id3v23CanonicalFrameRecord;
 
-    const sourceEdit =
-        edit.sourceEdit(
-            canonicalSourceIndex
-        );
+    alias CanonicalFrameMutation =
+        Id3v23CanonicalFrameMutation;
 
-    /*
-     * With exactly one canonical field, `modified` native-frame
-     * mutation can only arise from a canonical replacement.
-     *
-     * A removed field derives `removed`, and an unchanged field derives
-     * `unchanged`. Therefore any other state is an internal planner
-     * inconsistency.
-     */
-    assert(
-        sourceEdit.state ==
-        MetadataSourceFieldEditState.modified
-    );
+    alias ExistingFrameRegenerationStatus =
+        Id3v23ExistingFrameRegenerationStatus;
 
-    const fieldPlan =
-        planId3v23CanonicalField(
-            sourceEdit.replacement
-        );
+    alias ExistingFrameRegenerationPlan =
+        Id3v23ExistingFrameRegenerationPlan;
 
-    return
-        Id3v23ExistingFrameRegenerationPlan(
-            sourceFrameIndex,
-            canonicalSourceIndex,
-            fieldPlan.writable
-                ? Id3v23ExistingFrameRegenerationStatus.ready
-                : Id3v23ExistingFrameRegenerationStatus
-                    .unrepresentableField,
-            fieldPlan
-        );
+    alias CanonicalFieldPlan =
+        Id3v23CanonicalFieldPlan;
+
+    alias TagWritePlan =
+        Id3v23TagWritePlan;
+
+    alias deriveMutations =
+        deriveId3v23CanonicalFrameMutations;
+
+    alias planCanonicalField =
+        planId3v23CanonicalField;
+
+    alias planExistingSequence =
+        planId3v23ExistingFrameSequenceWrite;
+
+    alias planNewFrame =
+        planId3v23NewCanonicalFrame;
 }
 
 
 /++
-Builds the complete semantic write plan for an edited ID3v2.3
-canonical projection.
+Plans the complete semantic write of one edited ID3v2.3 tag.
 
-The edit overlay must correspond exactly to the projection's canonical
-metadata tree.
-
-The function deliberately continues planning after individual semantic
-failures so the returned plan exposes all blockers that can be
-determined at this stage.
-
-Preconditions:
-    `edit.sourceFieldCount == projection.metadata.length`.
+The orchestration is shared across ID3v2 revisions while all concrete
+result and sub-plan types remain revision-specific.
 
 Params:
-    projection = Provenance-preserving native-plus-canonical reader
-        projection.
-    edit = Canonical edit overlay associated with `projection.metadata`.
+    projection = Canonical projection of the parsed native tag.
+    edit = Canonical edit overlay.
     context = Whether the enclosing tag and/or file is being altered.
     policy = Native preservation policy.
 
@@ -333,75 +294,15 @@ planId3v23CanonicalTagWrite(
 )
     @safe
 {
-    const source =
-        projection.metadata;
-
-    assert(
-        edit.sourceFieldCount ==
-        source.length
-    );
-
-    auto result =
-        Id3v23TagWritePlan.init;
-
-    result.multiplicity =
-        validateMetadataTreeEditMultiplicity(
-            source,
-            edit
-        );
-
-    const mutations =
-        deriveId3v23CanonicalFrameMutations(
-            projection.frames,
-            edit
-        );
-
-    result.existingFrames =
-        planId3v23ExistingFrameSequenceWrite(
-            projection.frames,
-            mutations,
+    return
+        planId3v2CanonicalTagWrite!(
+            Id3v23TagWriteTraits
+        )(
+            projection,
+            edit,
             context,
             policy
         );
-
-    foreach (
-        sourceFrameIndex,
-        const record;
-        projection.frames
-    )
-    {
-        if (
-            mutations[sourceFrameIndex] !=
-            Id3v23CanonicalFrameMutation.modified
-        )
-        {
-            continue;
-        }
-
-        result.appendRegeneration(
-            planExistingFrameRegeneration(
-                sourceFrameIndex,
-                record,
-                edit
-            )
-        );
-    }
-
-    foreach (
-        newFieldIndex,
-        ref const field;
-        edit.newFields
-    )
-    {
-        result.appendNewFrame(
-            planId3v23NewCanonicalFrame(
-                newFieldIndex,
-                field
-            )
-        );
-    }
-
-    return result;
 }
 
 
