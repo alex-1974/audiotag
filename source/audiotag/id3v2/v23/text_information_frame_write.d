@@ -55,6 +55,9 @@ import audiotag.id3v2.v23.frame_header_write :
 import audiotag.id3v2.v23.new_frame_plan :
     planId3v23CanonicalField;
 
+import audiotag.id3v2.v23.regeneration_policy :
+    Id3v23MappedFrameRegenerationFormatPlan;
+
 import audiotag.id3v2.v23.text_information_write :
     serializeId3v23SlashListTextInformationPayload,
     serializeId3v23TextInformationPayload;
@@ -258,6 +261,291 @@ serializeNewId3v23TextInformationFrame(
 }
 
 
+/++
+Serializes modified canonical ordinary text information as a regenerated
+existing ID3v2.3 frame.
+
+Unlike `serializeNewId3v23TextInformationFrame`, this function receives
+an already validated structural regeneration plan derived from the
+source-native frame.
+
+The format plan controls:
+
+- preservation of tag/file alteration status flags;
+- preservation of grouping identity and its logical grouping byte;
+- rejection of read-only, compressed or encrypted source frames.
+
+ID3v2.3 has no frame-level unsynchronisation or Data Length Indicator.
+Whole-tag unsynchronisation remains a later tag-serialization concern.
+
+Params:
+    field = Replacement canonical `title`, `artist` or `album`.
+    formatPlan = Structural regeneration plan derived from the original
+        mapped native frame.
+
+Returns:
+    Complete regenerated native frame bytes or a structured
+    serialization failure.
++/
+SerializationResult!(ubyte[])
+serializeRegeneratedId3v23TextInformationFrame(
+    ref const(MetadataField) field,
+    const(Id3v23MappedFrameRegenerationFormatPlan) formatPlan
+)
+    @safe
+{
+    if (!formatPlan.writable)
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .unsupportedRepresentation,
+                        0,
+                        cast(ulong) formatPlan.status
+                    )
+                );
+    }
+
+    /*
+     * A publicly supplied format plan must remain structurally valid.
+     *
+     * Writable v2.3 regeneration may contain only the two alteration
+     * status bits and the grouping format bit.
+     */
+    if (
+        (
+            formatPlan.statusFlags &
+            0x3F
+        ) != 0
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .invalidFlags,
+                        8,
+                        formatPlan.statusFlags,
+                        0xC0
+                    )
+                );
+    }
+
+    if (
+        (
+            formatPlan.formatFlags &
+            0xDF
+        ) != 0
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .invalidFlags,
+                        9,
+                        formatPlan.formatFlags,
+                        0x20
+                    )
+                );
+    }
+
+    const groupingFlag =
+        (
+            formatPlan.formatFlags &
+            0x20
+        ) != 0;
+
+    if (
+        groupingFlag !=
+        formatPlan.hasGroupingIdentity
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .inconsistentStructure,
+                        9,
+                        formatPlan.formatFlags
+                    )
+                );
+    }
+
+    const canonicalPlan =
+        planId3v23CanonicalField(
+            field
+        );
+
+    if (!canonicalPlan.writable)
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .unsupportedRepresentation,
+                        0,
+                        cast(ulong) canonicalPlan.status
+                    )
+                );
+    }
+
+    if (
+        canonicalPlan.target.family !=
+        Id3v23CanonicalTargetFamily
+            .textInformation
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .unsupportedRepresentation
+                    )
+                );
+    }
+
+    auto payload =
+        serializeCanonicalTextInformationPayload(
+            field
+        );
+
+    if (payload.hasError)
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    payload.error
+                );
+    }
+
+    assert(
+        canonicalPlan.target.frameId.length ==
+        4
+    );
+
+    enum size_t maximumFrameDataSize =
+        uint.max;
+
+    const size_t prefixLength =
+        formatPlan.hasGroupingIdentity
+        ? 1
+        : 0;
+
+    /*
+     * The payload codec already guarantees payload.length <= uint.max.
+     * A preserved grouping byte may nevertheless push the complete
+     * frame-data region one byte beyond that domain.
+     */
+    if (
+        payload.value.length >
+        maximumFrameDataSize -
+        prefixLength
+    )
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    SerializationError(
+                        SerializationErrorCode
+                            .valueOutOfRange,
+                        4,
+                        cast(ulong) payload.value.length +
+                            cast(ulong) prefixLength,
+                        maximumFrameDataSize
+                    )
+                );
+    }
+
+    const frameDataSize =
+        prefixLength +
+        payload.value.length;
+
+    /*
+     * Every ordinary text-information payload contains at least its
+     * encoding marker.
+     */
+    assert(frameDataSize != 0);
+
+    Id3v23FrameHeader header;
+
+    foreach (index; 0 .. 4)
+    {
+        header.id[index] =
+            canonicalPlan.target.frameId[index];
+    }
+
+    header.size =
+        cast(uint)
+            frameDataSize;
+
+    header.statusFlags =
+        formatPlan.statusFlags;
+
+    header.formatFlags =
+        formatPlan.formatFlags;
+
+    auto encodedHeader =
+        serializeId3v23FrameHeader(
+            header
+        );
+
+    if (encodedHeader.hasError)
+    {
+        return
+            SerializationResult!(ubyte[])
+                .failure(
+                    encodedHeader.error
+                );
+    }
+
+    auto output =
+        new ubyte[
+            encodedHeader.value.length +
+            frameDataSize
+        ];
+
+    size_t position;
+
+    output[
+        position ..
+        position + encodedHeader.value.length
+    ] =
+        encodedHeader.value[];
+
+    position +=
+        encodedHeader.value.length;
+
+    if (formatPlan.hasGroupingIdentity)
+    {
+        output[position++] =
+            formatPlan.groupingIdentity;
+    }
+
+    output[
+        position ..
+        position + payload.value.length
+    ] =
+        payload.value[];
+
+    position +=
+        payload.value.length;
+
+    assert(position == output.length);
+
+    return
+        SerializationResult!(ubyte[])
+            .success(output);
+}
+
+
 version (unittest)
 {
     import audiotag.core.cursor :
@@ -275,6 +563,9 @@ version (unittest)
 
     import audiotag.id3v2.v23.frame :
         parseId3v23FrameEnvelope;
+
+    import audiotag.id3v2.v23.regeneration_policy :
+        planId3v23MappedFrameRegenerationFormat;
 
 
     private MetadataField textField(
@@ -325,6 +616,34 @@ version (unittest)
                 MetadataKey(key),
                 wrapped
             );
+    }
+
+
+    private Id3v23MappedFrameRegenerationFormatPlan
+    regenerationPlanFromSource(
+        const(ubyte)[] bytes
+    )
+        @safe
+    {
+        auto cursor =
+            ByteCursor(
+                ByteSpan(bytes)
+            );
+
+        auto frame =
+            cursor.parseId3v23FrameEnvelope();
+
+        assert(frame.hasValue);
+        assert(cursor.empty);
+
+        auto planned =
+            planId3v23MappedFrameRegenerationFormat(
+                frame.value
+            );
+
+        assert(planned.hasValue);
+
+        return planned.value;
     }
 }
 
@@ -549,4 +868,306 @@ unittest
         SerializationErrorCode
             .unsupportedRepresentation
     );
+}
+
+
+/// A plain existing TIT2 frame can be regenerated from replacement text.
+unittest
+{
+    const ubyte[] source =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+
+            0x00,
+            'O', 'l', 'd'
+        ];
+
+    const formatPlan =
+        regenerationPlanFromSource(
+            source
+        );
+
+    assert(formatPlan.writable);
+
+    auto field =
+        textField(
+            "title",
+            "New"
+        );
+
+    auto encoded =
+        serializeRegeneratedId3v23TextInformationFrame(
+            field,
+            formatPlan
+        );
+
+    assert(encoded.hasValue);
+
+    assert(
+        encoded.value ==
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+
+            0x00,
+            'N', 'e', 'w'
+        ]
+    );
+}
+
+
+/// Alteration-status flags and grouping survive regeneration.
+unittest
+{
+    const ubyte[] source =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x05,
+            0xC0, 0x20,
+
+            0x12,
+            0x00,
+            'O', 'l', 'd'
+        ];
+
+    const formatPlan =
+        regenerationPlanFromSource(
+            source
+        );
+
+    assert(formatPlan.writable);
+    assert(formatPlan.statusFlags == 0xC0);
+    assert(formatPlan.formatFlags == 0x20);
+    assert(formatPlan.hasGroupingIdentity);
+    assert(formatPlan.groupingIdentity == 0x12);
+
+    auto field =
+        textField(
+            "title",
+            "New"
+        );
+
+    auto encoded =
+        serializeRegeneratedId3v23TextInformationFrame(
+            field,
+            formatPlan
+        );
+
+    assert(encoded.hasValue);
+
+    assert(
+        encoded.value ==
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x05,
+            0xC0, 0x20,
+
+            0x12,
+            0x00,
+            'N', 'e', 'w'
+        ]
+    );
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                encoded.value[],
+                900
+            )
+        );
+
+    auto frame =
+        cursor.parseId3v23FrameEnvelope();
+
+    assert(frame.hasValue);
+    assert(cursor.empty);
+
+    assert(frame.value.header.sourceOffset == 900);
+    assert(frame.value.header.statusFlags == 0xC0);
+    assert(frame.value.header.formatFlags == 0x20);
+    assert(frame.value.header.size == 5);
+}
+
+
+/// Canonical artist-list semantics are retained during regeneration.
+unittest
+{
+    const ubyte[] source =
+        [
+            'T', 'P', 'E', '1',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+
+            0x00,
+            'A', '/', 'B'
+        ];
+
+    const formatPlan =
+        regenerationPlanFromSource(
+            source
+        );
+
+    auto field =
+        textListField(
+            "artist",
+            [
+                "C",
+                "D"
+            ]
+        );
+
+    auto encoded =
+        serializeRegeneratedId3v23TextInformationFrame(
+            field,
+            formatPlan
+        );
+
+    assert(encoded.hasValue);
+
+    assert(
+        encoded.value ==
+        [
+            'T', 'P', 'E', '1',
+            0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00,
+
+            0x00,
+            'C', '/', 'D'
+        ]
+    );
+}
+
+
+/// A non-writable structural plan cannot enter physical regeneration.
+unittest
+{
+    const ubyte[] source =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x80,
+
+            0x00, 0x00, 0x00, 0x01,
+            0x55
+        ];
+
+    const formatPlan =
+        regenerationPlanFromSource(
+            source
+        );
+
+    assert(!formatPlan.writable);
+
+    auto field =
+        textField(
+            "title",
+            "New"
+        );
+
+    auto encoded =
+        serializeRegeneratedId3v23TextInformationFrame(
+            field,
+            formatPlan
+        );
+
+    assert(encoded.hasError);
+
+    assert(
+        encoded.error.code ==
+        SerializationErrorCode
+            .unsupportedRepresentation
+    );
+}
+
+
+/// Public format plans with unsupported flags are rejected defensively.
+unittest
+{
+    const ubyte[] source =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x00, 'X'
+        ];
+
+    auto formatPlan =
+        regenerationPlanFromSource(
+            source
+        );
+
+    formatPlan.formatFlags =
+        0x80;
+
+    auto field =
+        textField(
+            "title",
+            "New"
+        );
+
+    auto encoded =
+        serializeRegeneratedId3v23TextInformationFrame(
+            field,
+            formatPlan
+        );
+
+    assert(encoded.hasError);
+
+    assert(
+        encoded.error.code ==
+        SerializationErrorCode
+            .invalidFlags
+    );
+
+    assert(encoded.error.index == 9);
+}
+
+
+/// Grouping flag and grouping-plan state must agree.
+unittest
+{
+    const ubyte[] source =
+        [
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+
+            0x00, 'X'
+        ];
+
+    auto formatPlan =
+        regenerationPlanFromSource(
+            source
+        );
+
+    formatPlan.formatFlags =
+        0x20;
+
+    assert(!formatPlan.hasGroupingIdentity);
+
+    auto field =
+        textField(
+            "title",
+            "New"
+        );
+
+    auto encoded =
+        serializeRegeneratedId3v23TextInformationFrame(
+            field,
+            formatPlan
+        );
+
+    assert(encoded.hasError);
+
+    assert(
+        encoded.error.code ==
+        SerializationErrorCode
+            .inconsistentStructure
+    );
+
+    assert(encoded.error.index == 9);
 }
