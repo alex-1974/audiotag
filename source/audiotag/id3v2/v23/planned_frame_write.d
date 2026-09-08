@@ -7,7 +7,8 @@ and concrete native frame serializers.
 Currently executable canonical target families:
 
 - ordinary text information (`T***`);
-- ordinary URL links (`W***`, excluding `WXXX`).
+- ordinary URL links (`W***`, excluding `WXXX`);
+- user-defined text (`TXXX`).
 
 Other semantically valid target families remain explicit
 `unsupportedRepresentation` results until their complete native frame
@@ -65,6 +66,10 @@ import audiotag.id3v2.v23.text_information_frame_write :
 import audiotag.id3v2.v23.url_link_frame_write :
     serializeNewId3v23UrlLinkFrame,
     serializeRegeneratedId3v23UrlLinkFrame;
+
+import audiotag.id3v2.v23.user_text_frame_write :
+    serializeNewId3v23UserTextFrame,
+    serializeRegeneratedId3v23UserTextFrame;
 
 
 /++
@@ -158,8 +163,8 @@ Before physical dispatch the function verifies:
 - re-planning the replacement produces the same target;
 - the preserved source frame still yields a structural regeneration plan.
 
-At present the ordinary text-information and ordinary URL-link families
-are physically executable.
+At present the ordinary text-information, ordinary URL-link and
+user-defined text families are physically executable.
 
 Params:
     projection = Original provenance-preserving canonical projection.
@@ -419,6 +424,18 @@ serializeId3v23PlannedRegeneration(
             break;
         }
 
+        case Id3v23CanonicalTargetFamily
+            .userText:
+        {
+            serialized =
+                serializeRegeneratedId3v23UserTextFrame(
+                    sourceEdit.replacement,
+                    formatPlan.value
+                );
+
+            break;
+        }
+
         default:
         {
             serialized =
@@ -452,8 +469,8 @@ Executes one planned newly introduced canonical frame.
 The function validates that the supplied semantic plan still refers to
 the same canonical edit field before selecting the concrete serializer.
 
-At present the ordinary text-information and ordinary URL-link target
-families are physically executable.
+At present the ordinary text-information, ordinary URL-link and
+user-defined text target families are physically executable.
 
 Params:
     edit = Canonical edit overlay used to construct `plan`.
@@ -593,6 +610,15 @@ serializeId3v23PlannedNewFrame(
                     ]
                 );
 
+        case Id3v23CanonicalTargetFamily
+            .userText:
+            return
+                serializeNewId3v23UserTextFrame(
+                    newFields[
+                        newFramePlan.newFieldIndex
+                    ]
+                );
+
         default:
             return
                 SerializationResult!(ubyte[])
@@ -673,6 +699,25 @@ version (unittest)
                 MetadataKey(key),
                 wrapped
             );
+    }
+
+
+    private MetadataField userTextField(
+        string description,
+        string value
+    )
+        @safe
+    {
+        auto result =
+            textField(
+                "userText",
+                value
+            );
+
+        result.description =
+            description;
+
+        return result;
     }
 
 
@@ -973,6 +1018,133 @@ unittest
 }
 
 
+/// A planned new TXXX field dispatches through the v2.3 user-text serializer.
+unittest
+{
+    const projection =
+        Id3v23CanonicalProjection.init;
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.appendNewField(
+        userTextField(
+            "key",
+            "value"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.newFrameCount == 1);
+
+    auto serialized =
+        serializeId3v23PlannedNewFrame(
+            edit,
+            plan,
+            0
+        );
+
+    assert(serialized.hasValue);
+
+    assert(
+        serialized.value ==
+        [
+            'T', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x0A,
+            0x00, 0x00,
+
+            0x00,
+            'k', 'e', 'y',
+            0x00,
+            'v', 'a', 'l', 'u', 'e'
+        ]
+    );
+}
+
+
+/// A modified mapped TXXX frame dispatches to user-text regeneration.
+unittest
+{
+    const ubyte[] sourceBytes =
+        [
+            'T', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x08,
+            0x00, 0x00,
+
+            0x00,
+            'k', 'e', 'y',
+            0x00,
+            'o', 'l', 'd'
+        ];
+
+    const projection =
+        projectionWithMappedFrame(
+            sourceBytes,
+            userTextField(
+                "key",
+                "old"
+            )
+        );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            projection.metadata
+        );
+
+    edit.replaceSourceField(
+        0,
+        userTextField(
+            "new-key",
+            "new"
+        )
+    );
+
+    const plan =
+        planId3v23CanonicalTagWrite(
+            projection,
+            edit,
+            Id3v23WriteContext.tagOnly()
+        );
+
+    assert(plan.writable);
+    assert(plan.regenerationCount == 1);
+
+    auto executed =
+        serializeId3v23PlannedRegeneration(
+            projection,
+            edit,
+            plan,
+            0
+        );
+
+    assert(executed.hasValue);
+    assert(executed.value.hasValue);
+
+    assert(
+        executed.value.value ==
+        [
+            'T', 'X', 'X', 'X',
+            0x00, 0x00, 0x00, 0x0C,
+            0x00, 0x00,
+
+            0x00,
+            'n', 'e', 'w', '-', 'k', 'e', 'y',
+            0x00,
+            'n', 'e', 'w'
+        ]
+    );
+}
+
+
 /// Semantically writable still-unsupported target families remain explicit failures.
 unittest
 {
@@ -985,13 +1157,13 @@ unittest
         );
 
     auto field =
-        textField(
-            "userText",
-            "value"
+        urlField(
+            "userUrl",
+            "https://example.test/"
         );
 
     field.description =
-        "custom-key";
+        "homepage";
 
     edit.appendNewField(field);
 
@@ -1003,8 +1175,8 @@ unittest
         );
 
     /*
-     * The semantic planner supports TXXX. This physical executor does not
-     * yet have the complete v2.3 TXXX frame writer.
+     * The semantic planner supports WXXX. This physical executor does not
+     * yet have the complete v2.3 WXXX frame writer.
      */
     assert(plan.writable);
     assert(plan.newFrameCount == 1);
