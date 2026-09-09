@@ -65,8 +65,50 @@ import audiotag.core.file_update :
     FileUpdateStage;
 
 import audiotag.io.file_replace :
+    FileReplacementResult,
     FileReplacementStepResult,
+    executeFileReplacement,
     fileReplacementStepDone;
+
+
+/++
+Atomically replaces one existing regular POSIX file with complete new bytes.
+
+This is the public convenience entry point for the baseline POSIX replacement
+transaction. It adds no semantics beyond `PosixFileReplacementBackend` and
+`executeFileReplacement()`.
+
+The target must already exist as a regular non-symlink file. The replacement
+uses a same-directory temporary file and POSIX `rename` commit semantics.
+
+This baseline operation does not promise power-loss durability and does not
+preserve ownership, ACLs, extended attributes, special mode bits or timestamps.
+
+Params:
+    path = Existing regular file to replace.
+    replacement = Complete replacement byte sequence.
+
+Returns:
+    Number of replacement bytes on success, or a structured file-update error.
++/
+FileReplacementResult
+replaceFile(
+    string path,
+    const(ubyte)[] replacement
+)
+    @safe
+{
+    auto backend =
+        PosixFileReplacementBackend(
+            path
+        );
+
+    return
+        executeFileReplacement(
+            backend,
+            replacement
+        );
+}
 
 
 /++
@@ -962,6 +1004,57 @@ version (unittest)
                 .idup;
 
         assert(!exists(temporaryPath));
+    }
+
+
+    /// Public `replaceFile` composes the POSIX backend transaction.
+    unittest
+    {
+        const directory =
+            createPosixBackendTestDirectory();
+
+        scope (exit)
+        {
+            if (exists(directory))
+            {
+                rmdirRecurse(directory);
+            }
+        }
+
+        const target =
+            buildPath(
+                directory,
+                "public-api.mp3"
+            );
+
+        writeFile(
+            target,
+            [
+                cast(ubyte) 0x01,
+                cast(ubyte) 0x02
+            ]
+        );
+
+        const ubyte[] replacement =
+            [
+                0xA1,
+                0xB2,
+                0xC3
+            ];
+
+        auto result =
+            replaceFile(
+                target,
+                replacement
+            );
+
+        assert(result.hasValue);
+        assert(result.value == replacement.length);
+
+        assert(
+            readTestBytes(target) ==
+            replacement
+        );
     }
 
 
