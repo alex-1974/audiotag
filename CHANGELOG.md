@@ -27,6 +27,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Initial bounded `audiotag.id3v1` parser for exact ID3v1.0/ID3v1.1 tag blocks with zero-copy raw field preservation.
 - Strict ISO-8859-1 decoding for NUL-padded ID3v1 string fields while retaining raw source bytes.
 - Provenance-preserving ID3v1 canonical projection for title, artist, album and comment.
+- Canonical position value and stable `track`/`disc` registry keys with independently optional number and total components.
 - Zero-copy MP3 suffix locator for fixed trailing ID3v1 `TAG` blocks.
 - Combined zero-copy MP3 edge layout for leading ID3v2, opaque middle bytes and trailing ID3v1.
 

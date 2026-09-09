@@ -31,6 +31,7 @@ import audiotag.metadata.value :
     MetadataBinary,
     MetadataInteger,
     MetadataPicture,
+    MetadataPosition,
     MetadataText,
     MetadataTextList,
     MetadataUrl;
@@ -173,7 +174,10 @@ valueKindOf(
             MetadataValueKind.binary,
 
         (const(MetadataPicture) value) =>
-            MetadataValueKind.picture
+            MetadataValueKind.picture,
+
+        (const(MetadataPosition) value) =>
+            MetadataValueKind.position
     );
 }
 

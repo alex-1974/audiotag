@@ -21,6 +21,7 @@ import audiotag.metadata.value :
     MetadataInteger,
     MetadataPicture,
     MetadataPictureSource,
+    MetadataPosition,
     MetadataText,
     MetadataTextList,
     MetadataUrl,
@@ -40,7 +41,8 @@ enum MetadataValueKind : ubyte
     integer,
     url,
     binary,
-    picture
+    picture,
+    position
 }
 
 
@@ -157,7 +159,10 @@ MetadataValueKind metadataValueKind(MetadataValue value)
             MetadataValueKind.binary,
 
         (MetadataPicture picture) =>
-            MetadataValueKind.picture
+            MetadataValueKind.picture,
+
+        (MetadataPosition position) =>
+            MetadataValueKind.position
     );
 }
 
@@ -166,9 +171,8 @@ MetadataValueKind metadataValueKind(MetadataValue value)
 Initial canonical metadata registry.
 
 Only keys whose semantics fit the current canonical value model are
-registered here. More specialized concepts such as track/disc counts,
-dates and roles should be added only after their canonical
-representation has been decided.
+registered here. More specialized concepts such as dates and roles should
+be added only after their canonical representation has been decided.
 +/
 private immutable MetadataFieldDefinition[] definitions =
 [
@@ -278,6 +282,18 @@ private immutable MetadataFieldDefinition[] definitions =
         MetadataKey("uniqueFileIdentifier"),
         MetadataValueKind.binary,
         MetadataMultiplicity.repeated
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("track"),
+        MetadataValueKind.position,
+        MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("disc"),
+        MetadataValueKind.position,
+        MetadataMultiplicity.single
     )
 ];
 
@@ -379,6 +395,17 @@ unittest
                 )
             )
         ) == MetadataValueKind.picture
+    );
+
+    assert(
+        metadataValueKind(
+            MetadataValue(
+                MetadataPosition.numberAndTotal(
+                    3,
+                    12
+                )
+            )
+        ) == MetadataValueKind.position
     );
 }
 
@@ -583,6 +610,42 @@ unittest
 }
 
 
+/// Track and disc use one shared position value family.
+unittest
+{
+    foreach (key; ["track", "disc"])
+    {
+        auto definition =
+            findMetadataFieldDefinition(
+                MetadataKey(key)
+            );
+
+        assert(definition.found);
+
+        assert(
+            definition.definition.valueKind ==
+            MetadataValueKind.position
+        );
+
+        assert(
+            definition.definition.multiplicity ==
+            MetadataMultiplicity.single
+        );
+
+        assert(
+            definition.definition.accepts(
+                MetadataValue(
+                    MetadataPosition.numberAndTotal(
+                        1,
+                        2
+                    )
+                )
+            )
+        );
+    }
+}
+
+
 /// Unknown canonical keys remain explicitly unregistered.
 unittest
 {
@@ -601,7 +664,7 @@ unittest
     const registry =
         metadataFieldDefinitions();
 
-    assert(registry.length == 18);
+    assert(registry.length == 20);
 
     assert(registry[0].key.name == "title");
     assert(registry[1].key.name == "artist");
@@ -621,4 +684,6 @@ unittest
     assert(registry[15].key.name == "userText");
     assert(registry[16].key.name == "privateData");
     assert(registry[17].key.name == "uniqueFileIdentifier");
+    assert(registry[18].key.name == "track");
+    assert(registry[19].key.name == "disc");
 }

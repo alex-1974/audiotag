@@ -53,6 +53,80 @@ struct MetadataInteger
 
 
 /++
+Canonical position within an ordered set.
+
+Track and disc metadata commonly carry two related numeric components:
+
+- the item's number/position in the set;
+- the optional total number of items in that set.
+
+Native formats represent these components differently. ID3v2 may combine
+them as `3/12`, Vorbis Comment may store them in separate fields, and MP4
+stores them as one numeric pair. The canonical model therefore keeps both
+components together while making their presence explicit.
+
+Neither zero nor another numeric value is used as an absence sentinel.
+This permits the canonical layer to distinguish an absent component from an
+explicit native zero when a format-specific mapper chooses to preserve one.
+
+No relationship such as `number <= total` is imposed here. Validation of
+native syntax and format-specific semantic constraints belongs to the codec
+or mapping layer.
++/
+struct MetadataPosition
+{
+    /// Whether a position/number is present.
+    bool hasNumber;
+
+    /// Position/number when `hasNumber` is true.
+    ulong number;
+
+    /// Whether a total count is present.
+    bool hasTotal;
+
+    /// Total count when `hasTotal` is true.
+    ulong total;
+
+    /// Constructs a position containing only its number.
+    static MetadataPosition numberOnly(ulong number)
+        @safe pure nothrow @nogc
+    {
+        return MetadataPosition(true, number, false, 0);
+    }
+
+    /// Constructs a position containing both number and total.
+    static MetadataPosition numberAndTotal(
+        ulong number,
+        ulong total
+    )
+        @safe pure nothrow @nogc
+    {
+        return MetadataPosition(true, number, true, total);
+    }
+
+    /++
+    Constructs a position containing only its total.
+
+    This shape is required for metadata systems such as Vorbis Comment,
+    where total-count fields are physically independent from number fields.
+    +/
+    static MetadataPosition totalOnly(ulong total)
+        @safe pure nothrow @nogc
+    {
+        return MetadataPosition(false, 0, true, total);
+    }
+
+    /// Returns whether neither semantic component is present.
+    @property
+    bool empty() const
+        @safe pure nothrow @nogc
+    {
+        return !hasNumber && !hasTotal;
+    }
+}
+
+
+/++
 Canonical URL value.
 
 No URL syntax validation is implied by this type. It distinguishes a
@@ -194,7 +268,8 @@ alias MetadataValue =
         MetadataInteger,
         MetadataUrl,
         MetadataBinary,
-        MetadataPicture
+        MetadataPicture,
+        MetadataPosition
     );
 
 
@@ -245,6 +320,86 @@ unittest
         value.match!(
             (MetadataInteger integer) =>
                 integer.value == 42,
+            _ => false
+        );
+
+    assert(matches);
+}
+
+
+/// Position values distinguish number-only, paired and total-only shapes.
+unittest
+{
+    const numberOnly =
+        MetadataPosition.numberOnly(3);
+
+    assert(!numberOnly.empty);
+    assert(numberOnly.hasNumber);
+    assert(numberOnly.number == 3);
+    assert(!numberOnly.hasTotal);
+
+    const pair =
+        MetadataPosition.numberAndTotal(
+            3,
+            12
+        );
+
+    assert(!pair.empty);
+    assert(pair.hasNumber);
+    assert(pair.number == 3);
+    assert(pair.hasTotal);
+    assert(pair.total == 12);
+
+    const totalOnly =
+        MetadataPosition.totalOnly(12);
+
+    assert(!totalOnly.empty);
+    assert(!totalOnly.hasNumber);
+    assert(totalOnly.hasTotal);
+    assert(totalOnly.total == 12);
+}
+
+
+/// Explicit zero remains distinguishable from an absent component.
+unittest
+{
+    const explicitZero =
+        MetadataPosition.numberAndTotal(
+            0,
+            0
+        );
+
+    assert(explicitZero.hasNumber);
+    assert(explicitZero.number == 0);
+    assert(explicitZero.hasTotal);
+    assert(explicitZero.total == 0);
+
+    const absent =
+        MetadataPosition.init;
+
+    assert(absent.empty);
+    assert(!absent.hasNumber);
+    assert(!absent.hasTotal);
+}
+
+
+/// Position metadata remains a distinct MetadataValue alternative.
+unittest
+{
+    MetadataValue value =
+        MetadataPosition.numberAndTotal(
+            4,
+            9
+        );
+
+    const matches =
+        value.match!(
+            (MetadataPosition position) =>
+                position.hasNumber &&
+                position.number == 4 &&
+                position.hasTotal &&
+                position.total == 9,
+
             _ => false
         );
 
