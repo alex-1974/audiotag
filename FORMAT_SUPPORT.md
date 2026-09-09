@@ -14,7 +14,7 @@ Legend:
 | MPEG Audio / MP3 | ID3v2.4 | Core | Core | Active bounded parser, canonical mapping, complete tag codec writer and POSIX path-based leading-ID3v2 insertion/replacement/removal; MPEG audio remainder is preserved opaquely rather than validated |
 | MPEG Audio / MP3 | ID3v2.3 | Core | Core | Active bounded parser, canonical mapping, complete tag codec writer with whole-tag unsynchronisation and extended-header CRC support, plus POSIX path-based leading-ID3v2 insertion/replacement/removal; MPEG audio remainder is preserved opaquely rather than validated |
 | MPEG Audio / MP3 | ID3v2.2 | — | — | Planned |
-| MPEG Audio / MP3 | ID3v1 | Core | — | Raw fixed-size ID3v1.0/ID3v1.1 tag parser plus zero-copy MP3 trailing-tag locator; text decoding/canonical mapping and writer still pending |
+| MPEG Audio / MP3 | ID3v1 | Core | — | Raw fixed-size ID3v1.0/ID3v1.1 tag parser, strict ISO-8859-1 text decoding and zero-copy MP3 trailing-tag locator; canonical mapping and writer still pending |
 | MPEG Audio / MP3 | APEv2 | — | — | Planned |
 | MPEG Audio / MP3 | Lyrics3 | — | — | Lower-priority planned support |
 | FLAC | native metadata blocks | — | — | Planned |
