@@ -114,8 +114,37 @@ updateMp3LeadingId3v2(
 
 version (unittest)
 {
+    import std.sumtype :
+        match;
+
+    import audiotag.core.cursor :
+        ByteCursor;
+
     import audiotag.core.error :
         ParseErrorCode;
+
+    import audiotag.metadata.edit :
+        MetadataTreeEdit;
+
+    import audiotag.metadata.field :
+        MetadataField,
+        MetadataKey;
+
+    import audiotag.metadata.value :
+        MetadataText,
+        MetadataValue;
+
+    import audiotag.id3v2.v23.api :
+        serializeId3v23Tag;
+
+    import audiotag.id3v2.v23.canonical_tag :
+        parseId3v23CanonicalTag;
+
+    import audiotag.id3v2.v24.api :
+        serializeId3v24Tag;
+
+    import audiotag.id3v2.v24.canonical_tag :
+        parseId3v24CanonicalTag;
 }
 
 
@@ -318,4 +347,304 @@ unittest
     );
 
     assert(result.error.offset == 203);
+}
+
+
+/// ID3v2.3 canonical editing integrates with MP3 prefix replacement end to end.
+unittest
+{
+    const ubyte[] audio =
+        [
+            0xFF, 0xFB, 0x90, 0x64,
+            0x12, 0x34
+        ];
+
+    const ubyte[] source =
+        [
+            'I', 'D', '3',
+            0x03, 0x00,
+            0x00,
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+            0x00, 'U',
+
+            0xFF, 0xFB, 0x90, 0x64,
+            0x12, 0x34
+        ];
+
+    auto prefix =
+        parseMp3Prefix(
+            ByteSpan(source, 100)
+        );
+
+    assert(prefix.hasValue);
+    assert(
+        prefix.value.remainder.data ==
+        audio
+    );
+
+    auto tagCursor =
+        ByteCursor(
+            prefix.value.leadingId3v2
+        );
+
+    auto parsedTag =
+        tagCursor.parseId3v23CanonicalTag();
+
+    assert(parsedTag.hasValue);
+    assert(tagCursor.empty);
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            parsedTag.value
+                .projection
+                .metadata
+        );
+
+    MetadataValue newTitle =
+        MetadataText("V");
+
+    edit.replaceSourceField(
+        0,
+        MetadataField(
+            MetadataKey("title"),
+            newTitle
+        )
+    );
+
+    auto serialized =
+        serializeId3v23Tag(
+            parsedTag.value,
+            edit
+        );
+
+    assert(serialized.hasValue);
+    assert(serialized.value.hasValue);
+
+    auto updated =
+        updateMp3LeadingId3v2(
+            ByteSpan(source, 100),
+            serialized.value.value
+        );
+
+    assert(updated.hasValue);
+    assert(updated.value.hasValue);
+
+    auto updatedPrefix =
+        parseMp3Prefix(
+            ByteSpan(
+                updated.value.value,
+                100
+            )
+        );
+
+    assert(updatedPrefix.hasValue);
+    assert(
+        updatedPrefix.value
+            .remainder
+            .sourceOffset ==
+        122
+    );
+    assert(
+        updatedPrefix.value
+            .remainder
+            .data ==
+        audio
+    );
+
+    auto updatedTagCursor =
+        ByteCursor(
+            updatedPrefix.value
+                .leadingId3v2
+        );
+
+    auto reparsedTag =
+        updatedTagCursor
+            .parseId3v23CanonicalTag();
+
+    assert(reparsedTag.hasValue);
+    assert(updatedTagCursor.empty);
+
+    assert(
+        reparsedTag.value
+            .projection
+            .metadata
+            .length ==
+        1
+    );
+
+    assert(
+        reparsedTag.value
+            .projection
+            .metadata[0]
+            .key
+            .name ==
+        "title"
+    );
+
+    const titleMatches =
+        reparsedTag.value
+            .projection
+            .metadata[0]
+            .value
+            .match!(
+                (MetadataText text) =>
+                    text.value == "V",
+                _ => false
+            );
+
+    assert(titleMatches);
+}
+
+
+/// ID3v2.4 canonical editing integrates with MP3 prefix replacement end to end.
+unittest
+{
+    const ubyte[] audio =
+        [
+            0xFF, 0xFB, 0x90, 0x64,
+            0x56, 0x78
+        ];
+
+    const ubyte[] source =
+        [
+            'I', 'D', '3',
+            0x04, 0x00,
+            0x00,
+            0x00, 0x00, 0x00, 0x0C,
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+            0x00, 'U',
+
+            0xFF, 0xFB, 0x90, 0x64,
+            0x56, 0x78
+        ];
+
+    auto prefix =
+        parseMp3Prefix(
+            ByteSpan(source, 200)
+        );
+
+    assert(prefix.hasValue);
+    assert(
+        prefix.value.remainder.data ==
+        audio
+    );
+
+    auto tagCursor =
+        ByteCursor(
+            prefix.value.leadingId3v2
+        );
+
+    auto parsedTag =
+        tagCursor.parseId3v24CanonicalTag();
+
+    assert(parsedTag.hasValue);
+    assert(tagCursor.empty);
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            parsedTag.value
+                .projection
+                .metadata
+        );
+
+    MetadataValue newTitle =
+        MetadataText("V");
+
+    edit.replaceSourceField(
+        0,
+        MetadataField(
+            MetadataKey("title"),
+            newTitle
+        )
+    );
+
+    auto serialized =
+        serializeId3v24Tag(
+            parsedTag.value,
+            edit
+        );
+
+    assert(serialized.hasValue);
+    assert(serialized.value.hasValue);
+
+    auto updated =
+        updateMp3LeadingId3v2(
+            ByteSpan(source, 200),
+            serialized.value.value
+        );
+
+    assert(updated.hasValue);
+    assert(updated.value.hasValue);
+
+    auto updatedPrefix =
+        parseMp3Prefix(
+            ByteSpan(
+                updated.value.value,
+                200
+            )
+        );
+
+    assert(updatedPrefix.hasValue);
+    assert(
+        updatedPrefix.value
+            .remainder
+            .sourceOffset ==
+        222
+    );
+    assert(
+        updatedPrefix.value
+            .remainder
+            .data ==
+        audio
+    );
+
+    auto updatedTagCursor =
+        ByteCursor(
+            updatedPrefix.value
+                .leadingId3v2
+        );
+
+    auto reparsedTag =
+        updatedTagCursor
+            .parseId3v24CanonicalTag();
+
+    assert(reparsedTag.hasValue);
+    assert(updatedTagCursor.empty);
+
+    assert(
+        reparsedTag.value
+            .projection
+            .metadata
+            .length ==
+        1
+    );
+
+    assert(
+        reparsedTag.value
+            .projection
+            .metadata[0]
+            .key
+            .name ==
+        "title"
+    );
+
+    const titleMatches =
+        reparsedTag.value
+            .projection
+            .metadata[0]
+            .value
+            .match!(
+                (MetadataText text) =>
+                    text.value == "V",
+                _ => false
+            );
+
+    assert(titleMatches);
 }
