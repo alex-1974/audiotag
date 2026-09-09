@@ -796,6 +796,9 @@ nativeUnlink(
 
 version (unittest)
 {
+    import core.sys.posix.unistd :
+        createHardLinkNative = link;
+
     import std.conv :
         octal;
 
@@ -843,6 +846,36 @@ version (unittest)
         return
             cast(ubyte[])
                 readFile(path);
+    }
+
+
+    /++
+    Creates one hard-link alias for a test file.
+
+    The POSIX `link` binding consumes NUL-terminated C strings. This test-only
+    helper owns those temporary C-string buffers and keeps the pointer boundary
+    narrowly `@trusted`.
+    +/
+    private void
+    createHardLink(
+        string existingPath,
+        string aliasPath
+    )
+        @trusted
+    {
+        const existingCString =
+            existingPath ~ '\0';
+
+        const aliasCString =
+            aliasPath ~ '\0';
+
+        assert(
+            createHardLinkNative(
+                existingCString.ptr,
+                aliasCString.ptr
+            ) ==
+            0
+        );
     }
 
 
@@ -975,6 +1008,88 @@ version (unittest)
         assert(result.hasValue);
         assert(result.value == 0);
         assert(readTestBytes(target).length == 0);
+    }
+
+
+    /// Replacing one pathname does not modify an existing hard-link alias.
+    unittest
+    {
+        const directory =
+            createPosixBackendTestDirectory();
+
+        scope (exit)
+        {
+            if (exists(directory))
+            {
+                rmdirRecurse(directory);
+            }
+        }
+
+        const target =
+            buildPath(
+                directory,
+                "track.mp3"
+            );
+
+        const aliasPath =
+            buildPath(
+                directory,
+                "track-alias.mp3"
+            );
+
+        const ubyte[] original =
+            [
+                0x10,
+                0x20,
+                0x30
+            ];
+
+        const ubyte[] replacement =
+            [
+                0xAA,
+                0xBB,
+                0xCC,
+                0xDD
+            ];
+
+        writeFile(
+            target,
+            original
+        );
+
+        createHardLink(
+            target,
+            aliasPath
+        );
+
+        assert(
+            readTestBytes(aliasPath) ==
+            original
+        );
+
+        auto backend =
+            PosixFileReplacementBackend(
+                target
+            );
+
+        auto result =
+            executeFileReplacement(
+                backend,
+                replacement
+            );
+
+        assert(result.hasValue);
+        assert(result.value == replacement.length);
+
+        assert(
+            readTestBytes(target) ==
+            replacement
+        );
+
+        assert(
+            readTestBytes(aliasPath) ==
+            original
+        );
     }
 
 
