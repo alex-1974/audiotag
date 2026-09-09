@@ -11,6 +11,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Initial read-only `audiotag.mp3` prefix API for locating and bounding prepended ID3v2.3 and ID3v2.4 tags.
 - I/O-free planning for insertion, replacement or removal of a prepended ID3v2 tag while preserving the remaining source bytes unchanged.
 - I/O-free materialization of a leading-ID3v2 write plan into a new owned byte buffer with checked output-length arithmetic.
+- High-level in-memory `audiotag.mp3` API composing prefix location, write planning and materialization into one leading-ID3v2 update operation.
 - High-level same-version ID3v2.3 serialization API.
 - Curated public `audiotag.id3v2.v23` package API.
 - High-level same-version ID3v2.4 serialization API.

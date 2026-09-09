@@ -3,8 +3,9 @@ Public consumer surface for initial MP3 container inspection and updates.
 
 The current MP3 layer is deliberately small. It can locate and bound a
 prepended ID3v2.3 or ID3v2.4 tag, expose the remaining source bytes, plan
-replacement of that leading tag and materialize the plan into a new owned
-byte buffer. It does not yet validate MPEG audio frames, scan for appended
+replacement of that leading tag, materialize the plan into a new owned
+byte buffer and expose those steps through one high-level in-memory update
+operation. It does not yet validate MPEG audio frames, scan for appended
 metadata or perform file I/O.
 
 The container layer reuses the revision-specific ID3 envelope parsers so
@@ -39,3 +40,7 @@ public import audiotag.mp3.prefix_write_plan :
 public import audiotag.mp3.prefix_write :
     Mp3LeadingId3v2WriteResult,
     materializeMp3LeadingId3v2Write;
+
+public import audiotag.mp3.api :
+    Mp3LeadingId3v2UpdateResult,
+    updateMp3LeadingId3v2;
