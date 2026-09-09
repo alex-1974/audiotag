@@ -23,6 +23,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Initial POSIX whole-file replacement backend using same-directory `mkstemp`, complete raw writes, access-mode preservation and atomic `rename` commit semantics.
 - Public POSIX `replaceFile(path, bytes)` convenience API composing the safe replacement backend and portable orchestrator.
 - Structured cross-platform `readFileBytes(path)` API for whole-file byte reads with pre-commit I/O error reporting.
+- POSIX path-based MP3 leading-ID3v2 update API composing structured reads, in-memory container rewriting and atomic whole-file replacement.
 
 ### Changed
 
