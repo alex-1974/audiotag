@@ -24,6 +24,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Public POSIX `replaceFile(path, bytes)` convenience API composing the safe replacement backend and portable orchestrator.
 - Structured cross-platform `readFileBytes(path)` API for whole-file byte reads with pre-commit I/O error reporting.
 - POSIX path-based MP3 leading-ID3v2 update API composing structured reads, in-memory container rewriting and atomic whole-file replacement.
+- Initial bounded `audiotag.id3v1` parser for exact ID3v1.0/ID3v1.1 tag blocks with zero-copy raw field preservation.
 
 ### Changed
 
