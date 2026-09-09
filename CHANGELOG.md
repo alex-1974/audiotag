@@ -19,6 +19,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Curated public `audiotag.metadata` canonical metadata API.
 - Serialization result/error types through `audiotag.core`.
 - Structured file-update result/error types with explicit pre-commit, commit and post-commit stages through `audiotag.core`.
+- Backend-injected file-replacement orchestration through `audiotag.io`, with commit-boundary and failure-injection coverage and no platform I/O dependency.
 
 ### Changed
 
