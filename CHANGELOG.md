@@ -25,6 +25,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Structured cross-platform `readFileBytes(path)` API for whole-file byte reads with pre-commit I/O error reporting.
 - POSIX path-based MP3 leading-ID3v2 update API composing structured reads, in-memory container rewriting and atomic whole-file replacement.
 - Initial bounded `audiotag.id3v1` parser for exact ID3v1.0/ID3v1.1 tag blocks with zero-copy raw field preservation.
+- Zero-copy MP3 suffix locator for fixed trailing ID3v1 `TAG` blocks.
 
 ### Changed
 
