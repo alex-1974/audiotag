@@ -39,6 +39,10 @@ public import audiotag.mp3.suffix :
     Mp3SuffixLayout,
     locateMp3TrailingId3v1;
 
+public import audiotag.mp3.layout :
+    Mp3Layout,
+    parseMp3Layout;
+
 public import audiotag.mp3.prefix_write_plan :
     Mp3LeadingId3v2WritePlan,
     planMp3LeadingId3v2Write;
