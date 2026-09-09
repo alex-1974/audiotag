@@ -55,11 +55,20 @@ The active implementation now includes:
 - ID3v2.3 extended-header CRC validation and regeneration;
 - parse → write → parse coverage for ordinary, unsynchronised and
   CRC-bearing ID3v2.3 tags;
-- preservation, regeneration, discard/reject and padding policies.
+- preservation, regeneration, discard/reject and padding policies;
+- structured whole-file reads and POSIX whole-file replacement with
+  explicit pre-commit, commit and post-commit error stages;
+- MP3 leading-ID3v2.3/v2.4 insertion, replacement and removal while
+  preserving the remaining file bytes unchanged;
+- POSIX path-based MP3 leading-ID3v2 updates composing read, in-memory
+  container rewrite and atomic pathname replacement;
+- end-to-end ID3v2.3 and ID3v2.4 canonical edit → serialization →
+  physical MP3 file update → reread/reparse coverage.
 
-The ID3v2.3 and ID3v2.4 tag codecs do not yet constitute an MPEG/MP3
-container writer: inserting or resizing the resulting tag inside an
-audio file is a separate layer.
+The current MP3 layer intentionally handles only the leading ID3v2.3 or
+ID3v2.4 region. It treats the remaining bytes as opaque and does not yet
+validate MPEG audio frames or manage APEv2, Lyrics3 or ID3v1. A complete
+multi-tag MPEG Audio module remains a later roadmap phase.
 
 ## Core design
 

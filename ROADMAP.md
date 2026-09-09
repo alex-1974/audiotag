@@ -208,14 +208,29 @@ Implemented:
 - canonical writer support for T***, W***, TXXX, WXXX, COMM, USLT,
   APIC, PRIV and UFID.
 
+MP3/container integration now also includes:
+
+- leading ID3v2.3/v2.4 prefix location and exact bounding;
+- insertion, replacement and removal of the complete leading ID3v2
+  envelope while preserving the remainder byte-for-byte;
+- structured whole-file reads;
+- same-directory POSIX temporary-file replacement with atomic `rename`
+  commit semantics;
+- a path-based leading-ID3v2 MP3 update API;
+- end-to-end canonical edit → ID3 serialization → physical MP3 update →
+  reread/reparse coverage for both ID3v2.3 and ID3v2.4.
+
 Deliberately deferred beyond this phase:
 
 - whole-tag unsynchronisation writing;
 - extended-header CRC regeneration;
 - changed-tag restriction handling beyond conservative rejection;
 - compression regeneration;
-- encryption regeneration;
-- MPEG/MP3 container update strategy.
+- encryption regeneration.
+
+The implemented MP3 writer is deliberately limited to the leading ID3v2
+region. MPEG audio-frame validation and simultaneous APEv2/Lyrics3/ID3v1
+handling remain part of the later full MPEG Audio format module.
 
 ## Phase 6 — ID3 version family
 
