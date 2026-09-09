@@ -165,7 +165,7 @@ struct PosixFileReplacementBackend
         }
 
         if (
-            !S_ISREG(
+            !nativeIsRegular(
                 info.st_mode
             )
         )
@@ -618,6 +618,25 @@ containsNul(
     }
 
     return false;
+}
+
+
+/++
+Trusted wrapper around the druntime `S_ISREG` helper.
+
+`S_ISREG` is exposed as `@system` by the POSIX druntime binding even though
+this operation only inspects the supplied mode bits and does not access
+memory. Keeping that narrow mismatch here preserves the public backend's
+`@safe` boundary.
++/
+private bool
+nativeIsRegular(
+    mode_t mode
+)
+    @trusted
+{
+    return
+        S_ISREG(mode);
 }
 
 
