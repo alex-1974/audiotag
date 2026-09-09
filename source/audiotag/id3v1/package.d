@@ -9,9 +9,12 @@ fields.
 Raw spans remain available so callers can deliberately handle non-conforming
 legacy encodings without heuristic decoding or loss of source bytes.
 
-This package does not locate an ID3v1 trailer inside an MP3 file, map fields
-into canonical metadata or serialize tags yet. Those responsibilities remain
-separate later layers.
+Title, artist, album and comment can be projected into the shared canonical
+metadata model with exact native provenance. Year, track and genre remain
+native-only until their canonical semantics are defined.
+
+This package does not locate an ID3v1 trailer inside an MP3 file or serialize
+tags yet. Those responsibilities remain separate later layers.
 +/
 module audiotag.id3v1;
 
@@ -34,3 +37,8 @@ public import audiotag.id3v1.tag :
 public import audiotag.id3v1.text_decode :
     decodeId3v1Latin1Text,
     id3v1TextContent;
+
+public import audiotag.id3v1.canonical :
+    Id3v1CanonicalTag,
+    parseId3v1CanonicalTag,
+    projectId3v1TagToCanonical;
