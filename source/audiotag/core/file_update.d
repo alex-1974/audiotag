@@ -82,7 +82,10 @@ enum FileUpdateErrorCode : ubyte
     cleanupFailed,
 
     /// The requested update guarantee is unsupported by this backend.
-    unsupportedOperation
+    unsupportedOperation,
+
+    /// Source file bytes could not be read before an update commit.
+    readFailed
 }
 
 

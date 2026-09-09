@@ -7,6 +7,7 @@ that transaction model.
 +/
 module audiotag.io;
 
+public import audiotag.io.file_read;
 public import audiotag.io.file_replace;
 
 version (Posix)

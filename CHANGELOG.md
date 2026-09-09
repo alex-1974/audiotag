@@ -22,6 +22,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Backend-injected file-replacement orchestration through `audiotag.io`, with commit-boundary and failure-injection coverage and no platform I/O dependency.
 - Initial POSIX whole-file replacement backend using same-directory `mkstemp`, complete raw writes, access-mode preservation and atomic `rename` commit semantics.
 - Public POSIX `replaceFile(path, bytes)` convenience API composing the safe replacement backend and portable orchestrator.
+- Structured cross-platform `readFileBytes(path)` API for whole-file byte reads with pre-commit I/O error reporting.
 
 ### Changed
 
