@@ -8,11 +8,12 @@ registry:
 - title;
 - artist;
 - album;
-- comment.
+- comment;
+- ID3v1.1 track number.
 
-The fixed year field, ID3v1.1 track byte and genre byte remain available in
-the preserved native `Id3v1Tag`, but are intentionally not projected until
-canonical date/track and genre semantics are defined.
+The fixed year field and genre byte remain available in the preserved native
+`Id3v1Tag`, but are intentionally not projected until canonical date and
+genre semantics are defined.
 
 Unused NUL-padded text fields produce no canonical field. No whitespace or
 other text normalization is performed.
@@ -50,6 +51,7 @@ import audiotag.metadata.tree :
     MetadataTree;
 
 import audiotag.metadata.value :
+    MetadataPosition,
     MetadataText,
     MetadataTextList,
     MetadataValue;
@@ -80,7 +82,8 @@ are currently representable:
 1. title;
 2. artist;
 3. album;
-4. comment.
+4. comment;
+5. ID3v1.1 track.
 
 An ID3v1 artist is one native scalar string, while canonical `artist` is a
 text list. Therefore a non-empty native artist becomes a one-element canonical
@@ -125,6 +128,11 @@ projectId3v1TagToCanonical(
         metadata,
         "comment",
         tag.comment
+    );
+
+    appendTrackIfPresent(
+        metadata,
+        tag
     );
 
     return
@@ -261,6 +269,58 @@ appendArtistIfPresent(
                 makeProvenance(
                     "artist",
                     raw
+                )
+            ]
+        );
+
+    assertRegisteredShape(
+        field
+    );
+
+    metadata.append(
+        field
+    );
+}
+
+
+/++
+Appends the ID3v1.1 track number when the structural parser recognized one.
+
+The canonical position contains only a number because ID3v1.1 has no native
+track-total field. Provenance covers exactly byte 126 of the 128-byte tag.
++/
+private void
+appendTrackIfPresent(
+    ref MetadataTree metadata,
+    Id3v1Tag tag
+)
+    @safe
+{
+    if (!tag.hasTrack)
+    {
+        return;
+    }
+
+    const rawTrack =
+        tag.raw.subspan(
+            126,
+            1
+        );
+
+    auto field =
+        MetadataField(
+            MetadataKey(
+                "track"
+            ),
+            MetadataValue(
+                MetadataPosition.numberOnly(
+                    tag.track
+                )
+            ),
+            [
+                makeProvenance(
+                    "track",
+                    rawTrack
                 )
             ]
         );
@@ -589,7 +649,7 @@ unittest
 }
 
 
-/// Year, track and genre remain native until their canonical shapes are set.
+/// ID3v1.1 track projects canonically while year and genre remain native.
 unittest
 {
     ubyte[128] bytes;
@@ -614,7 +674,10 @@ unittest
 
     auto result =
         parseId3v1CanonicalTag(
-            ByteSpan(bytes[])
+            ByteSpan(
+                bytes[],
+                2000
+            )
         );
 
     assert(result.hasValue);
@@ -635,7 +698,7 @@ unittest
 
     assert(
         canonical.metadata.length ==
-        1
+        2
     );
 
     assert(
@@ -653,7 +716,65 @@ unittest
                 "track"
             )
         ) ==
-        0
+        1
+    );
+
+    assert(
+        canonical.metadata[1]
+            .key.name ==
+        "track"
+    );
+
+    assert(
+        canonical.metadata[1]
+            .value.match!(
+                (const(MetadataPosition) position) =>
+                    position.hasNumber &&
+                    position.number == 7 &&
+                    !position.hasTotal,
+                _ => false
+            )
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance.length ==
+        1
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .native.system ==
+        MetadataSystem.id3v1
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .native.identifier ==
+        "track"
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .sourceOffset ==
+        2126
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .sourceLength ==
+        1
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .confidence ==
+        MetadataConfidence.exact
     );
 
     assert(

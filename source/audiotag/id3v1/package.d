@@ -9,9 +9,9 @@ fields.
 Raw spans remain available so callers can deliberately handle non-conforming
 legacy encodings without heuristic decoding or loss of source bytes.
 
-Title, artist, album and comment can be projected into the shared canonical
-metadata model with exact native provenance. Year, track and genre remain
-native-only until their canonical semantics are defined.
+Title, artist, album, comment and the ID3v1.1 track number can be projected
+into the shared canonical metadata model with exact native provenance. Year
+and genre remain native-only until their canonical semantics are defined.
 
 This package does not locate an ID3v1 trailer inside an MP3 file or serialize
 tags yet. Those responsibilities remain separate later layers.
