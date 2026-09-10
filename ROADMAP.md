@@ -228,14 +228,16 @@ Deliberately deferred beyond this phase:
 - compression regeneration;
 - encryption regeneration.
 
-The implemented MP3 writer is deliberately limited to the leading ID3v2
-region. MPEG audio-frame validation and simultaneous APEv2/Lyrics3/ID3v1
-handling remain part of the later full MPEG Audio format module.
+The Phase 5 MP3 writer milestone was deliberately limited to the leading
+ID3v2 region. Phase 6 has since added trailing ID3v1 container updates.
+MPEG audio-frame validation and simultaneous APEv2/Lyrics3/ID3v1
+coordination remain part of the later full MPEG Audio format module.
 
 ## Phase 6 — ID3 version family
 
-Status: in progress. The ID3v2.3 parser/writer milestone is complete
-for the currently targeted canonical frame scope.
+Status: in progress. The ID3v2.3 parser/writer milestone and the
+ID3v1 codec plus MP3 trailing-tag update milestone are complete for the
+currently targeted canonical scope.
 
 Implemented for ID3v2.3:
 
@@ -244,6 +246,9 @@ Implemented for ID3v2.3:
   unsynchronisation;
 - canonical reader/writer support for T***, W***, TXXX, WXXX, COMM,
   USLT, APIC, PRIV and UFID;
+- canonical track/disc positions and recognized genre handling;
+- compound `TYER`/`TDAT`/`TIME` projection and lossless writeback for
+  canonical `recordingDate`;
 - deterministic preservation, regeneration, discard/reject and padding
   policies;
 - complete tag serialization with physical tag-size derivation;
@@ -253,6 +258,27 @@ Implemented for ID3v2.3:
 - parse → write → parse coverage for ordinary, unsynchronised and
   CRC-bearing tags.
 
+Implemented for the wider ID3 family:
+
+- shared numeric ID3 genre registry used by ID3v1 and ID3v2 mappings;
+- canonical track/disc position values and precision-preserving
+  `recordingDate` / `releaseDate` values;
+- ID3v2.4 `TRCK`/`TPOS`, `TCON` and `TDRC` canonical projection;
+- strict bounded ID3v1.0/ID3v1.1 parsing;
+- strict ISO-8859-1 ID3v1 text decoding and lossless UTF-8-to-Latin-1
+  fixed-width encoding;
+- canonical ID3v1 projection/writeback for title, single artist, album,
+  comment, year-only `releaseDate`, nonzero ID3v1.1 track and recognized
+  genre;
+- deterministic native 128-byte ID3v1 serialization with preservation of
+  native-only bytes;
+- canonical ID3v1 edit planning with fixed-slot conflict detection and
+  explicit v1.0/v1.1 transition safety;
+- MP3 trailing-ID3v1 location, insertion, replacement and removal through
+  both owned in-memory buffers and the POSIX atomic whole-file update path;
+- end-to-end canonical ID3v1 edit → serialization → physical MP3 update
+  coverage.
+
 Still pending in the ID3 version family:
 
 - broader ID3v2.3 canonical coverage as further native frame codecs are
@@ -260,7 +286,7 @@ Still pending in the ID3 version family:
 - compression and encryption transformation support;
 - explicit native insertion-point control for newly introduced frames;
 - ID3v2.2 frame IDs/framing;
-- ID3v1;
+- broader cross-version canonical mapping where semantics differ;
 - version conversion through the canonical model.
 
 The common semantic codecs should be reused; version-specific framing

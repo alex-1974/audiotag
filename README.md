@@ -63,12 +63,22 @@ The active implementation now includes:
 - POSIX path-based MP3 leading-ID3v2 updates composing read, in-memory
   container rewrite and atomic pathname replacement;
 - end-to-end ID3v2.3 and ID3v2.4 canonical edit → serialization →
-  physical MP3 file update → reread/reparse coverage.
+  physical MP3 file update → reread/reparse coverage;
+- bounded ID3v1.0/ID3v1.1 parsing with strict ISO-8859-1 text decoding
+  and UTF-8-to-ISO-8859-1 encoding;
+- canonical ID3v1 projection/writeback for title, single artist, album,
+  comment, year-only `releaseDate`, ID3v1.1 track and recognized genre;
+- deterministic 128-byte ID3v1 serialization with native-only byte
+  preservation and explicit v1.0/v1.1 transition safety;
+- MP3 trailing-ID3v1 location, insertion, replacement and removal in
+  memory and through the POSIX whole-file update path.
 
-The current MP3 layer intentionally handles only the leading ID3v2.3 or
-ID3v2.4 region. It treats the remaining bytes as opaque and does not yet
-validate MPEG audio frames or manage APEv2, Lyrics3 or ID3v1. A complete
-multi-tag MPEG Audio module remains a later roadmap phase.
+The current MP3 layer handles the two implemented edge metadata regions:
+leading ID3v2.3/ID3v2.4 and final ID3v1. Bytes between them remain opaque.
+It does not yet validate MPEG audio frames or coordinate additional
+trailing systems such as APEv2 and Lyrics3. Deterministic precedence and
+preservation across the complete MPEG Audio tag set remain a later
+roadmap phase.
 
 ## Core design
 
@@ -164,10 +174,14 @@ Real commercial music files under the local `music/` directory are intentionally
 │   └── audiotag/
 │       ├── core/
 │       ├── metadata/
+│       ├── id3/
+│       ├── id3v1/
 │       ├── id3v2/
 │       │   ├── common/
 │       │   ├── v23/
 │       │   └── v24/
+│       ├── io/
+│       ├── mp3/
 │       └── package.d
 ├── testdata/
 │   ├── malformed/
