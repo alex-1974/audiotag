@@ -9,11 +9,13 @@ registry:
 - artist;
 - album;
 - comment;
-- ID3v1.1 track number.
+- ID3v1.1 track number;
+- recognized numeric genre.
 
-The fixed year field and genre byte remain available in the preserved native
-`Id3v1Tag`, but are intentionally not projected until canonical date and
-genre semantics are defined.
+The fixed year field remains available in the preserved native `Id3v1Tag` but
+is intentionally not projected until canonical date semantics are defined.
+Genre bytes not recognized by the shared ID3 compatibility registry likewise
+remain available only in the native representation.
 
 Unused NUL-padded text fields produce no canonical field. No whitespace or
 other text normalization is performed.
@@ -25,6 +27,9 @@ import audiotag.core.result :
 
 import audiotag.core.span :
     ByteSpan;
+
+import audiotag.id3.genre :
+    findId3GenreByCode;
 
 import audiotag.id3v1.tag :
     Id3v1Tag,
@@ -83,7 +88,8 @@ are currently representable:
 2. artist;
 3. album;
 4. comment;
-5. ID3v1.1 track.
+5. ID3v1.1 track, when present;
+6. recognized genre.
 
 An ID3v1 artist is one native scalar string, while canonical `artist` is a
 text list. Therefore a non-empty native artist becomes a one-element canonical
@@ -131,6 +137,11 @@ projectId3v1TagToCanonical(
     );
 
     appendTrackIfPresent(
+        metadata,
+        tag
+    );
+
+    appendGenreIfKnown(
         metadata,
         tag
     );
@@ -336,6 +347,68 @@ appendTrackIfPresent(
 
 
 /++
+Appends a canonical genre when the raw ID3v1 genre byte is recognized.
+
+The shared ID3 compatibility registry maps numeric genre codes to stable text
+labels. Unassigned codes and the ID3v1 unknown/no-genre sentinel are preserved
+only in the native tag and deliberately produce no canonical field.
+
+Provenance covers exactly byte 127 of the 128-byte tag.
++/
+private void
+appendGenreIfKnown(
+    ref MetadataTree metadata,
+    Id3v1Tag tag
+)
+    @safe
+{
+    const lookup =
+        findId3GenreByCode(
+            tag.genre
+        );
+
+    if (!lookup.found)
+    {
+        return;
+    }
+
+    const rawGenre =
+        tag.raw.subspan(
+            127,
+            1
+        );
+
+    auto field =
+        MetadataField(
+            MetadataKey(
+                "genre"
+            ),
+            MetadataValue(
+                MetadataTextList(
+                    [
+                        lookup.name
+                    ]
+                )
+            ),
+            [
+                makeProvenance(
+                    "genre",
+                    rawGenre
+                )
+            ]
+        );
+
+    assertRegisteredShape(
+        field
+    );
+
+    metadata.append(
+        field
+    );
+}
+
+
+/++
 Constructs exact provenance for one fixed-width native ID3v1 field.
 +/
 private MetadataProvenance
@@ -399,6 +472,9 @@ version (unittest)
         bytes[0] = 'T';
         bytes[1] = 'A';
         bytes[2] = 'G';
+
+        // Avoid an accidental code-0 ("Blues") genre in unrelated tests.
+        bytes[127] = 255;
     }
 
     private void
@@ -476,7 +552,7 @@ unittest
     const canonical =
         result.value;
 
-    assert(canonical.metadata.length == 4);
+    assert(canonical.metadata.length == 5);
 
     assert(
         canonical.metadata[0]
@@ -500,6 +576,12 @@ unittest
         canonical.metadata[3]
             .key.name ==
         "comment"
+    );
+
+    assert(
+        canonical.metadata[4]
+            .key.name ==
+        "genre"
     );
 
     assert(
@@ -538,6 +620,16 @@ unittest
                 (const(MetadataText) text) =>
                     text.value ==
                     "Comment",
+                _ => false
+            )
+    );
+
+    assert(
+        canonical.metadata[4]
+            .value.match!(
+                (const(MetadataTextList) list) =>
+                    list.values ==
+                    ["Pop"],
                 _ => false
             )
     );
@@ -585,6 +677,27 @@ unittest
             .provenance[0]
             .sourceLength ==
         30
+    );
+
+    assert(
+        canonical.metadata[4]
+            .provenance[0]
+            .native.identifier ==
+        "genre"
+    );
+
+    assert(
+        canonical.metadata[4]
+            .provenance[0]
+            .sourceOffset ==
+        1127
+    );
+
+    assert(
+        canonical.metadata[4]
+            .provenance[0]
+            .sourceLength ==
+        1
     );
 }
 
@@ -649,7 +762,7 @@ unittest
 }
 
 
-/// ID3v1.1 track projects canonically while year and genre remain native.
+/// ID3v1.1 track and recognized genre project while year remains native.
 unittest
 {
     ubyte[128] bytes;
@@ -698,7 +811,7 @@ unittest
 
     assert(
         canonical.metadata.length ==
-        2
+        3
     );
 
     assert(
@@ -783,8 +896,112 @@ unittest
                 "genre"
             )
         ) ==
-        0
+        1
     );
+
+    assert(
+        canonical.metadata[2]
+            .key.name ==
+        "genre"
+    );
+
+    assert(
+        canonical.metadata[2]
+            .value.match!(
+                (const(MetadataTextList) list) =>
+                    list.values ==
+                    ["Rock"],
+                _ => false
+            )
+    );
+
+    assert(
+        canonical.metadata[2]
+            .provenance.length ==
+        1
+    );
+
+    assert(
+        canonical.metadata[2]
+            .provenance[0]
+            .native.system ==
+        MetadataSystem.id3v1
+    );
+
+    assert(
+        canonical.metadata[2]
+            .provenance[0]
+            .native.identifier ==
+        "genre"
+    );
+
+    assert(
+        canonical.metadata[2]
+            .provenance[0]
+            .sourceOffset ==
+        2127
+    );
+
+    assert(
+        canonical.metadata[2]
+            .provenance[0]
+            .sourceLength ==
+        1
+    );
+
+    assert(
+        canonical.metadata[2]
+            .provenance[0]
+            .confidence ==
+        MetadataConfidence.exact
+    );
+}
+
+
+/// Unassigned and sentinel genre bytes remain native-only without data loss.
+unittest
+{
+    foreach (
+        genreCode;
+        [
+            cast(ubyte) 192,
+            cast(ubyte) 254,
+            cast(ubyte) 255
+        ]
+    )
+    {
+        ubyte[128] bytes;
+
+        setSignature(bytes);
+        bytes[127] = genreCode;
+
+        auto result =
+            parseId3v1CanonicalTag(
+                ByteSpan(
+                    bytes[],
+                    3000
+                )
+            );
+
+        assert(result.hasValue);
+
+        const canonical =
+            result.value;
+
+        assert(
+            canonical.native.genre ==
+            genreCode
+        );
+
+        assert(
+            canonical.metadata.count(
+                MetadataKey(
+                    "genre"
+                )
+            ) ==
+            0
+        );
+    }
 }
 
 

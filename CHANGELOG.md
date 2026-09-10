@@ -26,7 +26,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - POSIX path-based MP3 leading-ID3v2 update API composing structured reads, in-memory container rewriting and atomic whole-file replacement.
 - Initial bounded `audiotag.id3v1` parser for exact ID3v1.0/ID3v1.1 tag blocks with zero-copy raw field preservation.
 - Strict ISO-8859-1 decoding for NUL-padded ID3v1 string fields while retaining raw source bytes.
-- Provenance-preserving ID3v1 canonical projection for title, artist, album, comment and ID3v1.1 track number.
+- Provenance-preserving ID3v1 canonical projection for title, artist, album, comment, ID3v1.1 track number and recognized numeric genres.
 - Canonical position value and stable `track`/`disc` registry keys with independently optional number and total components.
 - Canonical `genre` registry key using an ordered text list so multiple free-form genres remain representable across tag systems.
 - Shared ID3 numeric genre registry covering codes 0-191 with explicit unknown-code handling and legacy reverse-lookup aliases.
