@@ -14,6 +14,7 @@ implemented here:
 - TRCK -> track
 - TPOS -> disc
 - TCON -> genre
+- TDRC -> recordingDate
 
 Valid native metadata that cannot yet be represented without loss is
 reported as such rather than being classified as malformed input.
@@ -44,6 +45,10 @@ import audiotag.id3v2.v24.text_information :
     Id3v24TextInformationFrame,
     Id3v24TextInformationOutcome;
 
+import audiotag.id3v2.v24.timestamp :
+    Id3v24Timestamp,
+    parseId3v24Timestamp;
+
 import audiotag.metadata.field :
     MetadataField,
     MetadataKey;
@@ -58,6 +63,8 @@ import audiotag.metadata.registry :
     findMetadataFieldDefinition;
 
 import audiotag.metadata.value :
+    MetadataDateTime,
+    MetadataDateTimeList,
     MetadataPosition,
     MetadataText,
     MetadataTextList,
@@ -205,6 +212,50 @@ mapId3v24TextInformationFrameToCanonical(
                         "genre",
                         "TCON",
                         decoded.values,
+                        frame.sourceOffset,
+                        sourceLength
+                    )
+                );
+    }
+
+    if (idEquals(frame.id, "TDRC"))
+    {
+        if (frame.values.length == 0)
+        {
+            return
+                Id3v24CanonicalTextMappingResult
+                    .unrepresentable();
+        }
+
+        MetadataDateTime[] values;
+
+        foreach (value; frame.values)
+        {
+            const parsed =
+                parseId3v24Timestamp(
+                    value
+                );
+
+            if (!parsed.parsed)
+            {
+                return
+                    Id3v24CanonicalTextMappingResult
+                        .unrepresentable();
+            }
+
+            values ~=
+                toCanonicalDateTime(
+                    parsed.value
+                );
+        }
+
+        return
+            Id3v24CanonicalTextMappingResult
+                .success(
+                    makeDateTimeListField(
+                        "recordingDate",
+                        "TDRC",
+                        values,
                         frame.sourceOffset,
                         sourceLength
                     )
@@ -370,6 +421,101 @@ makeTextListField(
             ),
             MetadataValue(
                 MetadataTextList(
+                    values
+                )
+            ),
+            [
+                makeProvenance(
+                    nativeIdentifier,
+                    sourceOffset,
+                    sourceLength
+                )
+            ]
+        );
+
+    assertRegisteredShape(
+        field
+    );
+
+    return field;
+}
+
+
+/++
+Converts one validated native ID3v2.4 timestamp to canonical components.
+
+ID3v2.4 specifies every timestamp as UTC, including reduced-precision values.
+No fractional second is produced because it is outside the v2.4 timestamp
+grammar.
++/
+private MetadataDateTime
+toCanonicalDateTime(
+    const Id3v24Timestamp timestamp
+)
+    @safe pure nothrow @nogc
+{
+    MetadataDateTime result;
+
+    result.hasYear = true;
+    result.year = timestamp.year;
+
+    if (timestamp.hasMonth)
+    {
+        result.hasMonth = true;
+        result.month = timestamp.month;
+    }
+
+    if (timestamp.hasDay)
+    {
+        result.hasDay = true;
+        result.day = timestamp.day;
+    }
+
+    if (timestamp.hasHour)
+    {
+        result.hasHour = true;
+        result.hour = timestamp.hour;
+    }
+
+    if (timestamp.hasMinute)
+    {
+        result.hasMinute = true;
+        result.minute = timestamp.minute;
+    }
+
+    if (timestamp.hasSecond)
+    {
+        result.hasSecond = true;
+        result.second = timestamp.second;
+    }
+
+    result.hasUtcOffset = true;
+    result.utcOffsetMinutes = 0;
+
+    return result;
+}
+
+
+/++
+Constructs one canonical ordered date/time-list field.
++/
+private MetadataField
+makeDateTimeListField(
+    string canonicalKey,
+    string nativeIdentifier,
+    MetadataDateTime[] values,
+    size_t sourceOffset,
+    size_t sourceLength
+)
+    @safe
+{
+    auto field =
+        MetadataField(
+            MetadataKey(
+                canonicalKey
+            ),
+            MetadataValue(
+                MetadataDateTimeList(
                     values
                 )
             ),
@@ -969,6 +1115,136 @@ unittest
         );
 
     assert(!result.mapped);
+    assert(
+        result.status ==
+        Id3v24CanonicalTextMappingStatus
+            .unrepresentableValueShape
+    );
+}
+
+
+/// TDRC maps reduced-precision UTC timestamps in native order.
+unittest
+{
+    auto result =
+        mapId3v24TextInformationFrameToCanonical(
+            testFrame(
+                "TDRC",
+                [
+                    "1999",
+                    "2001-06-12T23:45:01"
+                ],
+                1800
+            ),
+            41
+        );
+
+    assert(result.mapped);
+    assert(result.field.key.name == "recordingDate");
+
+    assert(
+        result.field.value.match!(
+            (MetadataDateTimeList list)
+            {
+                if (list.values.length != 2)
+                    return false;
+
+                const first = list.values[0];
+
+                if (
+                    !first.hasYear ||
+                    first.year != 1999 ||
+                    first.hasMonth ||
+                    first.hasTime ||
+                    !first.hasUtcOffset ||
+                    first.utcOffsetMinutes != 0
+                )
+                {
+                    return false;
+                }
+
+                const second = list.values[1];
+
+                return
+                    second.hasYear &&
+                    second.year == 2001 &&
+                    second.hasMonth &&
+                    second.month == 6 &&
+                    second.hasDay &&
+                    second.day == 12 &&
+                    second.hasHour &&
+                    second.hour == 23 &&
+                    second.hasMinute &&
+                    second.minute == 45 &&
+                    second.hasSecond &&
+                    second.second == 1 &&
+                    !second.hasFractionalSecond &&
+                    second.hasUtcOffset &&
+                    second.utcOffsetMinutes == 0;
+            },
+
+            _ => false
+        )
+    );
+
+    assert(
+        result.field.provenance[0].native.identifier ==
+        "TDRC"
+    );
+
+    assert(result.field.provenance[0].sourceOffset == 1800);
+    assert(result.field.provenance[0].sourceLength == 41);
+}
+
+
+/// Invalid TDRC timestamp syntax remains valid native-only metadata.
+unittest
+{
+    foreach (
+        values;
+        [
+            [""],
+            ["1999-13"],
+            ["1999-02-29"],
+            ["1999-01-01T24:00"],
+            ["1999-01-01T12:00Z"],
+            ["1999-01-01T12:00:00.1"],
+            ["1999", "not-a-date"]
+        ]
+    )
+    {
+        auto result =
+            mapId3v24TextInformationFrameToCanonical(
+                testFrame(
+                    "TDRC",
+                    values
+                )
+            );
+
+        assert(!result.mapped);
+
+        assert(
+            result.status ==
+            Id3v24CanonicalTextMappingStatus
+                .unrepresentableValueShape
+        );
+    }
+}
+
+
+/// An empty native TDRC value list is not invented as an empty date field.
+unittest
+{
+    auto result =
+        mapId3v24TextInformationFrameToCanonical(
+            testFrame(
+                "TDRC",
+                []
+            )
+        );
+
+    assert(!result.mapped);
+
     assert(
         result.status ==
         Id3v24CanonicalTextMappingStatus
