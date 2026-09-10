@@ -1,16 +1,14 @@
 /++
-High-level in-memory API for updating a prepended ID3v2 tag in an MP3
-byte source.
+High-level in-memory API for updating edge metadata in an MP3 byte source.
 
-This module composes the existing MP3 prefix stages:
+This module composes the existing MP3 edge stages for:
 
-1. locate and bound a supported prepended ID3v2 tag;
-2. plan insertion, replacement or removal of that leading tag;
-3. materialize the plan into a new owned byte buffer.
+- prepended ID3v2.3/ID3v2.4 insertion, replacement and removal;
+- trailing ID3v1 insertion, replacement and removal.
 
-The supplied replacement bytes are treated as an opaque, already
-serialized ID3v2 tag. No ID3 serialization is performed here and no file
-or other external I/O takes place.
+Supplied replacement bytes are already serialized tag blocks. No ID3
+semantic serialization is performed here and no file or other external I/O
+takes place.
 +/
 module audiotag.mp3.api;
 
@@ -18,6 +16,7 @@ import audiotag.core.result :
     ParseResult;
 
 import audiotag.core.serialization :
+    SerializationErrorCode,
     SerializationResult;
 
 import audiotag.core.span :
@@ -32,6 +31,16 @@ import audiotag.mp3.prefix_write :
 
 import audiotag.mp3.prefix_write_plan :
     planMp3LeadingId3v2Write;
+
+import audiotag.mp3.suffix :
+    locateMp3TrailingId3v1;
+
+import audiotag.mp3.suffix_write :
+    Mp3TrailingId3v1WriteResult,
+    materializeMp3TrailingId3v1Write;
+
+import audiotag.mp3.suffix_write_plan :
+    planMp3TrailingId3v1Write;
 
 
 /++
@@ -112,6 +121,81 @@ updateMp3LeadingId3v2(
 }
 
 
+/++
+Result of one complete in-memory trailing-ID3v1 update.
+
+The suffix locator cannot fail: absence of ID3v1 is a normal layout result.
+Therefore both replacement validation and output materialization use the
+single common serialization-error domain.
++/
+alias Mp3TrailingId3v1UpdateResult =
+    Mp3TrailingId3v1WriteResult;
+
+
+/++
+Updates the trailing ID3v1 region of a bounded MP3 byte source in memory.
+
+Behavior:
+
+- no trailing ID3v1 + valid 128-byte tag -> append at source end;
+- existing trailing ID3v1 + valid tag   -> replace final 128 bytes;
+- existing trailing ID3v1 + empty input -> remove final 128 bytes;
+- no trailing ID3v1 + empty input       -> return an owned byte-for-byte copy.
+
+A non-empty replacement must have the fixed physical ID3v1 shape required by
+`planMp3TrailingId3v1Write`: exactly 128 bytes beginning with `TAG`.
+
+No ID3v1 semantic parsing or serialization is performed here. Normal callers
+should pass bytes produced by `audiotag.id3v1.serializeId3v1Tag()` or another
+valid ID3v1 serializer.
+
+Params:
+    source = Complete bounded source bytes to update.
+    serializedId3v1 = Complete 128-byte replacement tag, or empty to remove
+        the current trailing ID3v1 block.
+
+Returns:
+    A newly allocated complete output buffer or a structured serialization
+    error.
+
+Safety:
+    The returned buffer owns its storage and does not alias `source` or
+    `serializedId3v1`. No file I/O is performed.
++/
+Mp3TrailingId3v1UpdateResult
+updateMp3TrailingId3v1(
+    ByteSpan source,
+    const(ubyte)[] serializedId3v1
+)
+    @safe
+{
+    const layout =
+        locateMp3TrailingId3v1(
+            source
+        );
+
+    const planned =
+        planMp3TrailingId3v1Write(
+            layout,
+            serializedId3v1
+        );
+
+    if (planned.hasError)
+    {
+        return
+            Mp3TrailingId3v1UpdateResult
+                .failure(
+                    planned.error
+                );
+    }
+
+    return
+        materializeMp3TrailingId3v1Write(
+            planned.value
+        );
+}
+
+
 version (unittest)
 {
     import std.sumtype :
@@ -145,6 +229,12 @@ version (unittest)
 
     import audiotag.id3v2.v24.canonical_tag :
         parseId3v24CanonicalTag;
+
+    import audiotag.id3v1.api :
+        serializeId3v1Tag;
+
+    import audiotag.id3v1.canonical :
+        parseId3v1CanonicalTag;
 }
 
 
@@ -647,4 +737,282 @@ unittest
             );
 
     assert(titleMatches);
+}
+
+
+/// Replaces an existing trailing ID3v1 block in one operation.
+unittest
+{
+    ubyte[130] source;
+
+    source[0] = 0xFF;
+    source[1] = 0xFB;
+
+    source[2] = 'T';
+    source[3] = 'A';
+    source[4] = 'G';
+    source[129] = 17;
+
+    ubyte[128] replacement;
+
+    replacement[0] = 'T';
+    replacement[1] = 'A';
+    replacement[2] = 'G';
+    replacement[127] = 13;
+
+    auto result =
+        updateMp3TrailingId3v1(
+            ByteSpan(source[]),
+            replacement[]
+        );
+
+    assert(result.hasValue);
+    assert(result.value.length == 130);
+
+    assert(result.value[0] == 0xFF);
+    assert(result.value[1] == 0xFB);
+
+    assert(
+        result.value[2 .. $] ==
+        replacement[]
+    );
+}
+
+
+/// Inserts a new trailing ID3v1 block after an untagged source.
+unittest
+{
+    const ubyte[] source =
+        [0xFF, 0xFB];
+
+    ubyte[128] replacement;
+
+    replacement[0] = 'T';
+    replacement[1] = 'A';
+    replacement[2] = 'G';
+    replacement[127] = 17;
+
+    auto result =
+        updateMp3TrailingId3v1(
+            ByteSpan(source),
+            replacement[]
+        );
+
+    assert(result.hasValue);
+    assert(result.value.length == 130);
+
+    assert(
+        result.value[0 .. 2] ==
+        source
+    );
+
+    assert(
+        result.value[2 .. $] ==
+        replacement[]
+    );
+}
+
+
+/// Removes an existing trailing ID3v1 block with an empty replacement.
+unittest
+{
+    ubyte[130] source;
+
+    source[0] = 0xFF;
+    source[1] = 0xFB;
+
+    source[2] = 'T';
+    source[3] = 'A';
+    source[4] = 'G';
+
+    auto result =
+        updateMp3TrailingId3v1(
+            ByteSpan(source[]),
+            []
+        );
+
+    assert(result.hasValue);
+
+    assert(
+        result.value ==
+        [0xFF, 0xFB]
+    );
+}
+
+
+/// Empty replacement on an untagged source returns an independent owned copy.
+unittest
+{
+    ubyte[] source =
+        [0xFF, 0xFB];
+
+    auto result =
+        updateMp3TrailingId3v1(
+            ByteSpan(source),
+            []
+        );
+
+    assert(result.hasValue);
+    assert(result.value == source);
+
+    source[0] = 0;
+
+    assert(
+        result.value ==
+        [0xFF, 0xFB]
+    );
+}
+
+
+/// Invalid replacement shape propagates as a serialization failure.
+unittest
+{
+    ubyte[128] replacement;
+
+    replacement[0] = 'T';
+    replacement[1] = 'A';
+    replacement[2] = 'X';
+
+    auto result =
+        updateMp3TrailingId3v1(
+            ByteSpan(
+                cast(const(ubyte)[])
+                    [0xFF, 0xFB]
+            ),
+            replacement[]
+        );
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        SerializationErrorCode.invalidValue
+    );
+
+    assert(result.error.index == 2);
+}
+
+
+/// Canonical ID3v1 editing integrates with MP3 suffix replacement end to end.
+unittest
+{
+    ubyte[130] source;
+
+    source[0] = 0xFF;
+    source[1] = 0xFB;
+
+    source[2] = 'T';
+    source[3] = 'A';
+    source[4] = 'G';
+
+    source[5] = 'A';
+
+    source[95] = '1';
+    source[96] = '9';
+    source[97] = '9';
+    source[98] = '9';
+
+    source[129] = 255;
+
+    const suffix =
+        locateMp3TrailingId3v1(
+            ByteSpan(
+                source[],
+                100
+            )
+        );
+
+    assert(suffix.hasTrailingId3v1);
+    assert(suffix.remainder.length == 2);
+
+    auto parsedTag =
+        parseId3v1CanonicalTag(
+            suffix.trailingId3v1
+        );
+
+    assert(parsedTag.hasValue);
+    assert(parsedTag.value.metadata.length == 2);
+    assert(
+        parsedTag.value.metadata[0]
+            .key.name ==
+        "title"
+    );
+
+    auto edit =
+        MetadataTreeEdit.forSource(
+            parsedTag.value.metadata
+        );
+
+    MetadataValue newTitle =
+        MetadataText("B");
+
+    edit.replaceSourceField(
+        0,
+        MetadataField(
+            MetadataKey("title"),
+            newTitle
+        )
+    );
+
+    auto serialized =
+        serializeId3v1Tag(
+            parsedTag.value,
+            edit
+        );
+
+    assert(serialized.hasValue);
+    assert(serialized.value.length == 128);
+
+    auto updated =
+        updateMp3TrailingId3v1(
+            ByteSpan(
+                source[],
+                100
+            ),
+            serialized.value
+        );
+
+    assert(updated.hasValue);
+    assert(updated.value.length == 130);
+
+    const updatedSuffix =
+        locateMp3TrailingId3v1(
+            ByteSpan(
+                updated.value,
+                100
+            )
+        );
+
+    assert(updatedSuffix.hasTrailingId3v1);
+    assert(updatedSuffix.remainder.length == 2);
+
+    assert(
+        updatedSuffix.remainder.data ==
+        [0xFF, 0xFB]
+    );
+
+    auto reparsed =
+        parseId3v1CanonicalTag(
+            updatedSuffix.trailingId3v1
+        );
+
+    assert(reparsed.hasValue);
+    assert(reparsed.value.metadata.length == 2);
+
+    const titleMatches =
+        reparsed.value.metadata[0]
+            .value
+            .match!(
+                (MetadataText text) =>
+                    text.value == "B",
+                _ => false
+            );
+
+    assert(titleMatches);
+
+    assert(
+        reparsed.value.metadata[1]
+            .key.name ==
+        "releaseDate"
+    );
 }

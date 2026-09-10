@@ -43,6 +43,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - End-to-end canonical ID3v1 same-version serialization from `MetadataTreeEdit` to an exact 128-byte tag block.
 - I/O-free MP3 trailing-ID3v1 insertion/replacement/removal planning with fixed-size and `TAG`-signature validation.
 - I/O-free materialization of trailing-ID3v1 MP3 write plans into owned complete byte buffers.
+- High-level in-memory MP3 trailing-ID3v1 insertion/replacement/removal API with canonical ID3v1 integration coverage.
 - Strict native ID3v2.3 `TYER`/`TDAT`/`TIME` recording-time aggregation with partial-component and calendar validation.
 - Sequence-level ID3v2.3 `TYER`/`TDAT`/`TIME` projection to one canonical `recordingDate` with multi-frame provenance.
 - Lossless ID3v2.3 `recordingDate` write decomposition into deterministic `TYER`/`TDAT`/`TIME` components, rejecting unsupported precision and component shapes.

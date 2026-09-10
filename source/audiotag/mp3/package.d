@@ -2,12 +2,12 @@
 Public consumer surface for initial MP3 container inspection and updates.
 
 The current MP3 layer is deliberately small. It can locate and bound a
-prepended ID3v2.3 or ID3v2.4 tag, locate a fixed trailing ID3v1 block, expose
-the remaining source bytes, plan replacement of the leading ID3v2 tag,
-materialize that plan into a new owned byte buffer and expose those steps
-through one high-level in-memory update operation. POSIX builds additionally
-expose a path-based leading-ID3v2 update operation backed by structured
-whole-file reads and atomic file replacement.
+prepended ID3v2.3 or ID3v2.4 tag and a fixed trailing ID3v1 block, expose the
+remaining source bytes, plan and materialize edge-tag replacement, and expose
+leading-ID3v2 and trailing-ID3v1 operations through high-level in-memory update
+APIs. POSIX builds additionally expose a path-based leading-ID3v2 update
+operation backed by structured whole-file reads and atomic file replacement.
+Path-based trailing-ID3v1 update is not yet exposed.
 
 The layer does not yet validate MPEG audio frames or coordinate multiple
 trailing tag systems such as APEv2, Lyrics3 and ID3v1. Tag interpretation
@@ -39,6 +39,14 @@ public import audiotag.mp3.suffix :
     Mp3SuffixLayout,
     locateMp3TrailingId3v1;
 
+public import audiotag.mp3.suffix_write_plan :
+    Mp3TrailingId3v1WritePlan,
+    planMp3TrailingId3v1Write;
+
+public import audiotag.mp3.suffix_write :
+    Mp3TrailingId3v1WriteResult,
+    materializeMp3TrailingId3v1Write;
+
 public import audiotag.mp3.layout :
     Mp3Layout,
     parseMp3Layout;
@@ -53,7 +61,9 @@ public import audiotag.mp3.prefix_write :
 
 public import audiotag.mp3.api :
     Mp3LeadingId3v2UpdateResult,
-    updateMp3LeadingId3v2;
+    Mp3TrailingId3v1UpdateResult,
+    updateMp3LeadingId3v2,
+    updateMp3TrailingId3v1;
 
 version (Posix)
 {
