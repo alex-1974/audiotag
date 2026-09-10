@@ -13,12 +13,12 @@ including frames that:
 - contain valid semantics that cannot yet be represented canonically.
 
 The canonical tree contains the mapped semantic fields. Each native
-frame record stores the contiguous canonical field range produced by
+frame record stores the contiguous canonical field range associated with
 that frame.
 
-At present one native ID3v2.3 frame produces at most one canonical
-field. The range representation deliberately permits future mappers to
-produce more than one field without changing this preservation model.
+Canonical ranges are not required to be disjoint or monotonic in native
+frame order. Several native frames may intentionally point to the same
+canonical field when their semantics were combined many-to-one.
 
 Native frames contain bounded source spans and therefore retain the
 lifetime requirements of their underlying byte source.
@@ -40,12 +40,14 @@ import audiotag.metadata.tree :
 Relationship between one preserved native frame and its canonical
 projection.
 
-`canonicalStart` is the canonical insertion position at which this
-native frame was projected.
+`canonicalStart` is the first canonical field associated with this native
+frame. For an ordinary one-to-one mapping it is the insertion position.
+For a many-to-one mapping it may point to a field inserted by an earlier
+native frame, so ranges may overlap and may be non-monotonic.
 
-When `canonicalCount == 0`, no canonical field was produced but the
-insertion position is still retained. This preserves the native
-frame's location relative to surrounding mapped fields.
+When `canonicalCount == 0`, no canonical field is associated with the
+native frame. The stored position still records where ordinary
+projection had reached when that frame was encountered.
 +/
 struct Id3v23CanonicalFrameRecord
 {
@@ -55,15 +57,15 @@ struct Id3v23CanonicalFrameRecord
     /// Canonical mapping outcome for this frame.
     Id3v23CanonicalMappingStatus status;
 
-    /// First canonical field index produced by this frame.
+    /// First canonical field index associated with this frame.
     size_t canonicalStart;
 
-    /// Number of consecutive canonical fields produced by this frame.
+    /// Number of consecutive canonical fields associated with this frame.
     size_t canonicalCount;
 
 
     /++
-    Returns whether this frame produced canonical metadata.
+    Returns whether this frame is associated with canonical metadata.
     +/
     @property
     bool mapped() const
@@ -189,6 +191,46 @@ public:
                 canonicalCount
             );
     }
+
+
+    /++
+    Appends a native frame linked to canonical metadata already present in the
+    projection.
+
+    This supports many-to-one mappings where several native frames jointly
+    contribute to the same canonical field. The linked range may therefore
+    overlap another frame's range and may point to an earlier canonical
+    position. No canonical field is appended by this operation.
+    +/
+    void appendLinkedMapped(
+        Id3v23NativeFrame native,
+        size_t canonicalStart,
+        size_t canonicalCount = 1
+    )
+        @safe
+    {
+        assert(canonicalCount != 0);
+
+        assert(
+            canonicalStart <=
+            _metadata.length
+        );
+
+        assert(
+            canonicalCount <=
+            _metadata.length -
+                canonicalStart
+        );
+
+        _frames ~=
+            Id3v23CanonicalFrameRecord(
+                native,
+                Id3v23CanonicalMappingStatus.mapped,
+                canonicalStart,
+                canonicalCount
+            );
+    }
+
 }
 
 
@@ -598,4 +640,35 @@ unittest
             .canonicalCount ==
         0
     );
+}
+
+/// Multiple native frames may link to the same canonical field.
+unittest
+{
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    projection.append(
+        testNative(),
+        testMapped(
+            "title",
+            "Example"
+        )
+    );
+
+    projection.appendLinkedMapped(
+        testNative(),
+        0
+    );
+
+    assert(projection.frameCount == 2);
+    assert(projection.metadata.length == 1);
+
+    assert(projection.frames[0].mapped);
+    assert(projection.frames[0].canonicalStart == 0);
+    assert(projection.frames[0].canonicalCount == 1);
+
+    assert(projection.frames[1].mapped);
+    assert(projection.frames[1].canonicalStart == 0);
+    assert(projection.frames[1].canonicalCount == 1);
 }

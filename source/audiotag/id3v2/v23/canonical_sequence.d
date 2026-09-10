@@ -9,9 +9,10 @@ frame bytes and, for every frame:
 1. reparses the structural frame envelope through the ID3v2.3 logical
    data cursor;
 2. dispatches the frame to its native semantic codec;
-3. maps the native outcome to canonical metadata;
-4. appends both native frame and mapping result to the canonical
-   projection.
+3. retains per-frame canonical mapping outcomes;
+4. aggregates sequence-level semantics such as legacy recording time;
+5. appends native frame records and canonical relationships in source
+   order.
 
 ID3v2.3 whole-tag unsynchronisation may add physical stuffing bytes
 inside frame headers, frame data, or across field boundaries. The
@@ -36,8 +37,15 @@ import audiotag.core.result :
 import audiotag.id3v2.v23.canonical_dispatch :
     mapId3v23NativeFrameToCanonical;
 
+import audiotag.id3v2.v23.canonical_mapping :
+    Id3v23CanonicalMappingResult;
+
 import audiotag.id3v2.v23.canonical_projection :
     Id3v23CanonicalProjection;
+
+import audiotag.id3v2.v23.canonical_recording_time :
+    isId3v23RecordingTimeFrameId,
+    mapId3v23RecordingTimeFramesToCanonical;
 
 import audiotag.id3v2.v23.data_cursor :
     Id3v23DataCursor;
@@ -49,6 +57,7 @@ import audiotag.id3v2.v23.frame_sequence :
     Id3v23FrameSequenceLayout;
 
 import audiotag.id3v2.v23.native_frame :
+    Id3v23NativeFrame,
     decodeId3v23NativeFrame;
 
 
@@ -87,14 +96,11 @@ projectId3v23FrameSequenceToCanonical(
             tagUnsynchronised
         );
 
-
-    auto projection =
-        Id3v23CanonicalProjection.init;
-
+    Id3v23NativeFrame[] nativeFrames;
+    Id3v23CanonicalMappingResult[] perFrameMappings;
 
     size_t parsedFrameCount =
         0;
-
 
     while (
         !cursor.empty
@@ -102,7 +108,6 @@ projectId3v23FrameSequenceToCanonical(
     {
         auto frameResult =
             cursor.parseId3v23FrameEnvelope();
-
 
         if (
             frameResult.hasError
@@ -115,13 +120,11 @@ projectId3v23FrameSequenceToCanonical(
                     );
         }
 
-
         auto nativeResult =
             decodeId3v23NativeFrame(
                 frameResult.value,
                 tagUnsynchronised
             );
-
 
         if (
             nativeResult.hasError
@@ -134,22 +137,16 @@ projectId3v23FrameSequenceToCanonical(
                     );
         }
 
+        nativeFrames ~=
+            nativeResult.value;
 
-        auto mapping =
+        perFrameMappings ~=
             mapId3v23NativeFrameToCanonical(
                 nativeResult.value
             );
 
-
-        projection.append(
-            nativeResult.value,
-            mapping
-        );
-
-
         ++parsedFrameCount;
     }
-
 
     if (
         parsedFrameCount !=
@@ -167,6 +164,68 @@ projectId3v23FrameSequenceToCanonical(
                 );
     }
 
+    auto recordingTimeMapping =
+        mapId3v23RecordingTimeFramesToCanonical(
+            nativeFrames
+        );
+
+    auto projection =
+        Id3v23CanonicalProjection.init;
+
+    bool recordingTimeFieldAppended;
+    size_t recordingTimeCanonicalStart;
+
+    foreach (
+        index,
+        native;
+        nativeFrames
+    )
+    {
+        if (
+            isId3v23RecordingTimeFrameId(
+                native.envelope.header.id
+            )
+        )
+        {
+            if (recordingTimeMapping.mapped)
+            {
+                if (!recordingTimeFieldAppended)
+                {
+                    recordingTimeCanonicalStart =
+                        projection.metadata.length;
+
+                    projection.append(
+                        native,
+                        recordingTimeMapping
+                    );
+
+                    recordingTimeFieldAppended =
+                        true;
+                }
+                else
+                {
+                    projection.appendLinkedMapped(
+                        native,
+                        recordingTimeCanonicalStart
+                    );
+                }
+            }
+            else
+            {
+                projection.append(
+                    native,
+                    recordingTimeMapping
+                );
+            }
+
+            continue;
+        }
+
+        projection.append(
+            native,
+            perFrameMappings[index]
+        );
+    }
 
     return
         ParseResult!Id3v23CanonicalProjection
@@ -178,6 +237,9 @@ projectId3v23FrameSequenceToCanonical(
 
 version (unittest)
 {
+    import std.sumtype :
+        match;
+
     import audiotag.core.span :
         ByteSpan;
 
@@ -186,6 +248,9 @@ version (unittest)
 
     import audiotag.id3v2.v23.frame_sequence :
         parseId3v23FrameSequenceLayout;
+
+    import audiotag.metadata.value :
+        MetadataDateTimeList;
 }
 
 
@@ -609,5 +674,274 @@ unittest
         projection.frames[0]
             .native.sourceLength ==
         bytes.length
+    );
+}
+
+/// Legacy recording-time frames aggregate into one shared canonical field.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'Y', 'E', 'R',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00,
+            0x00,
+            '2', '0', '0', '0',
+
+            'T', 'I', 'T', '2',
+            0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+            0x00,
+            'X',
+
+            'T', 'D', 'A', 'T',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00,
+            0x00,
+            '2', '9', '0', '2',
+
+            'T', 'I', 'M', 'E',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00,
+            0x00,
+            '2', '3', '5', '9'
+        ];
+
+    auto layoutResult =
+        parseId3v23FrameSequenceLayout(
+            ByteSpan(
+                bytes,
+                100
+            )
+        );
+
+    assert(layoutResult.hasValue);
+    assert(layoutResult.value.frameCount == 4);
+
+    auto result =
+        projectId3v23FrameSequenceToCanonical(
+            layoutResult.value
+        );
+
+    assert(result.hasValue);
+
+    const projection =
+        result.value;
+
+    assert(projection.frameCount == 4);
+    assert(projection.metadata.length == 2);
+
+    assert(
+        projection.metadata[0]
+            .key.name ==
+        "recordingDate"
+    );
+
+    assert(
+        projection.metadata[1]
+            .key.name ==
+        "title"
+    );
+
+    assert(
+        projection.metadata[0]
+            .value.match!(
+                (const(MetadataDateTimeList) list) =>
+                    list.values.length == 1 &&
+                    list.values[0].hasYear &&
+                    list.values[0].year == 2000 &&
+                    list.values[0].hasMonth &&
+                    list.values[0].month == 2 &&
+                    list.values[0].hasDay &&
+                    list.values[0].day == 29 &&
+                    list.values[0].hasHour &&
+                    list.values[0].hour == 23 &&
+                    list.values[0].hasMinute &&
+                    list.values[0].minute == 59 &&
+                    !list.values[0].hasUtcOffset,
+
+                _ =>
+                    false
+            )
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance.length ==
+        3
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance[0]
+            .native.identifier ==
+        "TYER"
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance[0]
+            .sourceOffset ==
+        100
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance[0]
+            .sourceLength ==
+        15
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance[1]
+            .native.identifier ==
+        "TDAT"
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance[1]
+            .sourceOffset ==
+        127
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance[2]
+            .native.identifier ==
+        "TIME"
+    );
+
+    assert(
+        projection.metadata[0]
+            .provenance[2]
+            .sourceOffset ==
+        142
+    );
+
+    assert(projection.frames[0].mapped);
+    assert(projection.frames[0].canonicalStart == 0);
+    assert(projection.frames[0].canonicalCount == 1);
+
+    assert(projection.frames[1].mapped);
+    assert(projection.frames[1].canonicalStart == 1);
+    assert(projection.frames[1].canonicalCount == 1);
+
+    assert(projection.frames[2].mapped);
+    assert(projection.frames[2].canonicalStart == 0);
+    assert(projection.frames[2].canonicalCount == 1);
+
+    assert(projection.frames[3].mapped);
+    assert(projection.frames[3].canonicalStart == 0);
+    assert(projection.frames[3].canonicalCount == 1);
+}
+
+
+/// Invalid legacy recording-time combinations remain native and explicit.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'Y', 'E', 'R',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00,
+            0x00,
+            '2', '0', '0', '1',
+
+            'T', 'D', 'A', 'T',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00,
+            0x00,
+            '2', '9', '0', '2'
+        ];
+
+    auto layoutResult =
+        parseId3v23FrameSequenceLayout(
+            ByteSpan(
+                bytes,
+                500
+            )
+        );
+
+    assert(layoutResult.hasValue);
+
+    auto result =
+        projectId3v23FrameSequenceToCanonical(
+            layoutResult.value
+        );
+
+    assert(result.hasValue);
+
+    const projection =
+        result.value;
+
+    assert(projection.frameCount == 2);
+    assert(projection.metadata.empty);
+
+    assert(
+        projection.frames[0]
+            .status ==
+        Id3v23CanonicalMappingStatus
+            .unrepresentableValueShape
+    );
+
+    assert(
+        projection.frames[1]
+            .status ==
+        Id3v23CanonicalMappingStatus
+            .unrepresentableValueShape
+    );
+}
+
+
+/// Duplicate legacy time components remain ambiguous rather than selected.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'Y', 'E', 'R',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00,
+            0x00,
+            '1', '9', '9', '9',
+
+            'T', 'Y', 'E', 'R',
+            0x00, 0x00, 0x00, 0x05,
+            0x00, 0x00,
+            0x00,
+            '2', '0', '0', '0'
+        ];
+
+    auto layoutResult =
+        parseId3v23FrameSequenceLayout(
+            ByteSpan(
+                bytes,
+                700
+            )
+        );
+
+    assert(layoutResult.hasValue);
+
+    auto result =
+        projectId3v23FrameSequenceToCanonical(
+            layoutResult.value
+        );
+
+    assert(result.hasValue);
+    assert(result.value.metadata.empty);
+
+    assert(
+        result.value.frames[0]
+            .status ==
+        Id3v23CanonicalMappingStatus
+            .unrepresentableValueShape
+    );
+
+    assert(
+        result.value.frames[1]
+            .status ==
+        Id3v23CanonicalMappingStatus
+            .unrepresentableValueShape
     );
 }
