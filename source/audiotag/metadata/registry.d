@@ -312,6 +312,12 @@ private immutable MetadataFieldDefinition[] definitions =
         MetadataKey("recordingDate"),
         MetadataValueKind.dateTimeList,
         MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("releaseDate"),
+        MetadataValueKind.dateTimeList,
+        MetadataMultiplicity.single
     )
 ];
 
@@ -772,6 +778,55 @@ unittest
 }
 
 
+
+/// Release date is distinct from recording date but uses the same value family.
+unittest
+{
+    auto definition =
+        findMetadataFieldDefinition(
+            MetadataKey(
+                "releaseDate"
+            )
+        );
+
+    assert(definition.found);
+
+    assert(
+        definition.definition.valueKind ==
+        MetadataValueKind.dateTimeList
+    );
+
+    assert(
+        definition.definition.multiplicity ==
+        MetadataMultiplicity.single
+    );
+
+    assert(
+        definition.definition.accepts(
+            MetadataValue(
+                MetadataDateTimeList(
+                    [
+                        MetadataDateTime.yearOnly(
+                            1999
+                        )
+                    ]
+                )
+            )
+        )
+    );
+
+    assert(
+        !definition.definition.accepts(
+            MetadataValue(
+                MetadataText(
+                    "1999"
+                )
+            )
+        )
+    );
+}
+
+
 /// Unknown canonical keys remain explicitly unregistered.
 unittest
 {
@@ -790,7 +845,7 @@ unittest
     const registry =
         metadataFieldDefinitions();
 
-    assert(registry.length == 22);
+    assert(registry.length == 23);
 
     assert(registry[0].key.name == "title");
     assert(registry[1].key.name == "artist");
@@ -814,4 +869,5 @@ unittest
     assert(registry[19].key.name == "disc");
     assert(registry[20].key.name == "genre");
     assert(registry[21].key.name == "recordingDate");
+    assert(registry[22].key.name == "releaseDate");
 }
