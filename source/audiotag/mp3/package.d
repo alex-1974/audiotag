@@ -5,9 +5,9 @@ The current MP3 layer is deliberately small. It can locate and bound a
 prepended ID3v2.3 or ID3v2.4 tag and a fixed trailing ID3v1 block, expose the
 remaining source bytes, plan and materialize edge-tag replacement, and expose
 leading-ID3v2 and trailing-ID3v1 operations through high-level in-memory update
-APIs. POSIX builds additionally expose a path-based leading-ID3v2 update
-operation backed by structured whole-file reads and atomic file replacement.
-Path-based trailing-ID3v1 update is not yet exposed.
+APIs. POSIX builds additionally expose path-based leading-ID3v2 and
+trailing-ID3v1 updates backed by structured whole-file reads and atomic file
+replacement.
 
 The layer does not yet validate MPEG audio frames or coordinate multiple
 trailing tag systems such as APEv2, Lyrics3 and ID3v1. Tag interpretation
@@ -77,4 +77,10 @@ version (Posix)
         Mp3LeadingId3v2FileUpdateErrorDomain,
         Mp3LeadingId3v2FileUpdateResult,
         updateMp3LeadingId3v2File;
+
+    public import audiotag.mp3.suffix_file_api :
+        Mp3TrailingId3v1FileUpdateError,
+        Mp3TrailingId3v1FileUpdateErrorDomain,
+        Mp3TrailingId3v1FileUpdateResult,
+        updateMp3TrailingId3v1File;
 }
