@@ -40,6 +40,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Deterministic native 128-byte ID3v1.0/ID3v1.1 serialization with exact source-field rebinding for future lossless canonical writeback.
 - Lossless canonical ID3v1 field encoding for text, year-only release date, track number and shared numeric genre targets.
 - Canonical ID3v1 edit planning with fixed-slot conflict detection, native-only byte preservation and explicit v1.0/v1.1 transition safety.
+- End-to-end canonical ID3v1 same-version serialization from `MetadataTreeEdit` to an exact 128-byte tag block.
 - Strict native ID3v2.3 `TYER`/`TDAT`/`TIME` recording-time aggregation with partial-component and calendar validation.
 - Sequence-level ID3v2.3 `TYER`/`TDAT`/`TIME` projection to one canonical `recordingDate` with multi-frame provenance.
 - Lossless ID3v2.3 `recordingDate` write decomposition into deterministic `TYER`/`TDAT`/`TIME` components, rejecting unsupported precision and component shapes.
