@@ -13,6 +13,7 @@ implemented here:
 - TALB -> album
 - TRCK -> track
 - TPOS -> disc
+- TCON -> genre
 
 Valid native metadata that cannot yet be represented without loss is
 reported as such rather than being classified as malformed input.
@@ -21,6 +22,9 @@ module audiotag.id3v2.v24.canonical_text;
 
 import std.sumtype :
     match;
+
+import audiotag.id3v2.common.genre :
+    decodeId3v24Genres;
 
 import audiotag.id3v2.common.position :
     parseId3v2Position;
@@ -180,6 +184,33 @@ mapId3v24TextInformationFrameToCanonical(
         );
     }
 
+    if (idEquals(frame.id, "TCON"))
+    {
+        auto decoded =
+            decodeId3v24Genres(
+                frame.values
+            );
+
+        if (!decoded.representable)
+        {
+            return
+                Id3v24CanonicalTextMappingResult
+                    .unrepresentable();
+        }
+
+        return
+            Id3v24CanonicalTextMappingResult
+                .success(
+                    makeTextListField(
+                        "genre",
+                        "TCON",
+                        decoded.values,
+                        frame.sourceOffset,
+                        sourceLength
+                    )
+                );
+    }
+
     return Id3v24CanonicalTextMappingResult.unsupported();
 }
 
@@ -314,6 +345,46 @@ private MetadataField makeScalarTextField(
         );
 
     assertRegisteredShape(field);
+
+    return field;
+}
+
+
+/++
+Constructs one canonical ordered text-list field.
++/
+private MetadataField
+makeTextListField(
+    string canonicalKey,
+    string nativeIdentifier,
+    string[] values,
+    size_t sourceOffset,
+    size_t sourceLength
+)
+    @safe
+{
+    auto field =
+        MetadataField(
+            MetadataKey(
+                canonicalKey
+            ),
+            MetadataValue(
+                MetadataTextList(
+                    values
+                )
+            ),
+            [
+                makeProvenance(
+                    nativeIdentifier,
+                    sourceOffset,
+                    sourceLength
+                )
+            ]
+        );
+
+    assertRegisteredShape(
+        field
+    );
 
     return field;
 }
@@ -812,14 +883,108 @@ unittest
 }
 
 
-/// Other text-information frames remain unsupported by this mapper.
+/// TCON maps ordered v2.4 numeric, free-text and keyword values.
 unittest
 {
     auto result =
         mapId3v24TextInformationFrameToCanonical(
             testFrame(
                 "TCON",
-                ["Rock"]
+                [
+                    "17",
+                    "Ambient",
+                    "RX",
+                    "CR"
+                ],
+                1700
+            ),
+            32
+        );
+
+    assert(result.mapped);
+    assert(result.field.key.name == "genre");
+
+    assert(
+        result.field.value.match!(
+            (MetadataTextList list) =>
+                list.values ==
+                [
+                    "Rock",
+                    "Ambient",
+                    "Remix",
+                    "Cover"
+                ],
+            _ => false
+        )
+    );
+
+    assert(
+        result.field.provenance[0].native.identifier ==
+        "TCON"
+    );
+    assert(result.field.provenance[0].sourceOffset == 1700);
+    assert(result.field.provenance[0].sourceLength == 32);
+}
+
+
+/// Free-text ID3v2.4 genres preserve native order and spelling.
+unittest
+{
+    auto result =
+        mapId3v24TextInformationFrameToCanonical(
+            testFrame(
+                "TCON",
+                [
+                    "Electronic",
+                    "Ambient"
+                ]
+            )
+        );
+
+    assert(result.mapped);
+
+    assert(
+        result.field.value.match!(
+            (MetadataTextList list) =>
+                list.values ==
+                [
+                    "Electronic",
+                    "Ambient"
+                ],
+            _ => false
+        )
+    );
+}
+
+
+/// Unknown explicit ID3v2.4 numeric genre references remain native-only.
+unittest
+{
+    auto result =
+        mapId3v24TextInformationFrameToCanonical(
+            testFrame(
+                "TCON",
+                ["255"]
+            )
+        );
+
+    assert(!result.mapped);
+    assert(
+        result.status ==
+        Id3v24CanonicalTextMappingStatus
+            .unrepresentableValueShape
+    );
+}
+
+
+/// Other text-information frames remain unsupported by this mapper.
+unittest
+{
+    auto result =
+        mapId3v24TextInformationFrameToCanonical(
+            testFrame(
+                "TBPM",
+                ["120"]
             )
         );
 

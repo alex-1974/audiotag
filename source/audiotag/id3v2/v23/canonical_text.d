@@ -12,6 +12,7 @@ The currently explicit mappings are:
 - TALB -> album
 - TRCK -> track
 - TPOS -> disc
+- TCON -> genre
 
 ID3v2.3 stores one native information string in an ordinary text frame.
 For TPE1, the ID3v2.3 specification defines "/" as the separator between
@@ -26,6 +27,9 @@ module audiotag.id3v2.v23.canonical_text;
 
 import std.sumtype :
     match;
+
+import audiotag.id3v2.common.genre :
+    decodeId3v23Genre;
 
 import audiotag.id3v2.common.position :
     parseId3v2Position;
@@ -211,6 +215,34 @@ mapId3v23TextInformationFrameToCanonical(
             frame.sourceOffset,
             sourceLength
         );
+    }
+
+
+    if (idEquals(frame.id, "TCON"))
+    {
+        auto decoded =
+            decodeId3v23Genre(
+                frame.value
+            );
+
+        if (!decoded.representable)
+        {
+            return
+                Id3v23CanonicalTextMappingResult
+                    .unrepresentable();
+        }
+
+        return
+            Id3v23CanonicalTextMappingResult
+                .success(
+                    makeTextListField(
+                        "genre",
+                        "TCON",
+                        decoded.values,
+                        frame.sourceOffset,
+                        sourceLength
+                    )
+                );
     }
 
 
@@ -421,6 +453,46 @@ private MetadataField makeScalarTextField(
         field
     );
 
+
+    return field;
+}
+
+
+/++
+Constructs one canonical ordered text-list field.
++/
+private MetadataField
+makeTextListField(
+    string canonicalKey,
+    string nativeIdentifier,
+    string[] values,
+    size_t sourceOffset,
+    size_t sourceLength
+)
+    @safe
+{
+    auto field =
+        MetadataField(
+            MetadataKey(
+                canonicalKey
+            ),
+            MetadataValue(
+                MetadataTextList(
+                    values
+                )
+            ),
+            [
+                makeProvenance(
+                    nativeIdentifier,
+                    sourceOffset,
+                    sourceLength
+                )
+            ]
+        );
+
+    assertRegisteredShape(
+        field
+    );
 
     return field;
 }
@@ -1139,14 +1211,96 @@ unittest
 }
 
 
-/// Other decoded text-information frames remain unsupported for now.
+/// TCON maps v2.3 legacy references and refinement in order.
 unittest
 {
     auto result =
         mapId3v23TextInformationFrameToCanonical(
             testFrame(
                 "TCON",
-                "Rock"
+                "(17)(26)Downtempo",
+                1600
+            ),
+            31
+        );
+
+    assert(result.mapped);
+    assert(result.field.key.name == "genre");
+
+    assert(
+        result.field.value.match!(
+            (MetadataTextList list) =>
+                list.values ==
+                [
+                    "Rock",
+                    "Ambient",
+                    "Downtempo"
+                ],
+            _ => false
+        )
+    );
+
+    assert(
+        result.field.provenance[0].native.identifier ==
+        "TCON"
+    );
+    assert(result.field.provenance[0].sourceOffset == 1600);
+    assert(result.field.provenance[0].sourceLength == 31);
+}
+
+
+/// Free-text ID3v2.3 TCON remains one exact canonical genre value.
+unittest
+{
+    auto result =
+        mapId3v23TextInformationFrameToCanonical(
+            testFrame(
+                "TCON",
+                "Experimental"
+            )
+        );
+
+    assert(result.mapped);
+
+    assert(
+        result.field.value.match!(
+            (MetadataTextList list) =>
+                list.values ==
+                ["Experimental"],
+            _ => false
+        )
+    );
+}
+
+
+/// Unknown explicit ID3v2.3 genre references remain native-only.
+unittest
+{
+    auto result =
+        mapId3v23TextInformationFrameToCanonical(
+            testFrame(
+                "TCON",
+                "(255)"
+            )
+        );
+
+    assert(!result.mapped);
+    assert(
+        result.status ==
+        Id3v23CanonicalTextMappingStatus
+            .unrepresentableValueShape
+    );
+}
+
+
+/// Other decoded text-information frames remain unsupported for now.
+unittest
+{
+    auto result =
+        mapId3v23TextInformationFrameToCanonical(
+            testFrame(
+                "TBPM",
+                "120"
             )
         );
 
