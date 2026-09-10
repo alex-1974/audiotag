@@ -28,6 +28,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Strict ISO-8859-1 decoding for NUL-padded ID3v1 string fields while retaining raw source bytes.
 - Provenance-preserving ID3v1 canonical projection for title, artist, album, comment, ID3v1.1 track number and recognized numeric genres.
 - Canonical position value and stable `track`/`disc` registry keys with independently optional number and total components.
+- ID3v2.3 and ID3v2.4 `TRCK`/`TPOS` canonical projection through shared strict numeric-position parsing.
 - Canonical `genre` registry key using an ordered text list so multiple free-form genres remain representable across tag systems.
 - Shared ID3 numeric genre registry covering codes 0-191 with explicit unknown-code handling and legacy reverse-lookup aliases.
 - Zero-copy MP3 suffix locator for fixed trailing ID3v1 `TAG` blocks.

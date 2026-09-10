@@ -11,6 +11,8 @@ implemented here:
 - TIT2 -> title
 - TPE1 -> artist
 - TALB -> album
+- TRCK -> track
+- TPOS -> disc
 
 Valid native metadata that cannot yet be represented without loss is
 reported as such rather than being classified as malformed input.
@@ -19,6 +21,9 @@ module audiotag.id3v2.v24.canonical_text;
 
 import std.sumtype :
     match;
+
+import audiotag.id3v2.common.position :
+    parseId3v2Position;
 
 import audiotag.id3v2.v24.canonical_mapping :
     Id3v24CanonicalMappingResult,
@@ -49,6 +54,7 @@ import audiotag.metadata.registry :
     findMetadataFieldDefinition;
 
 import audiotag.metadata.value :
+    MetadataPosition,
     MetadataText,
     MetadataTextList,
     MetadataValue;
@@ -143,6 +149,34 @@ mapId3v24TextInformationFrameToCanonical(
                 frame.sourceOffset,
                 sourceLength
             )
+        );
+    }
+
+    if (idEquals(frame.id, "TRCK"))
+    {
+        if (frame.values.length != 1)
+            return Id3v24CanonicalTextMappingResult.unrepresentable();
+
+        return mapPositionTextField(
+            "track",
+            "TRCK",
+            frame.values[0],
+            frame.sourceOffset,
+            sourceLength
+        );
+    }
+
+    if (idEquals(frame.id, "TPOS"))
+    {
+        if (frame.values.length != 1)
+            return Id3v24CanonicalTextMappingResult.unrepresentable();
+
+        return mapPositionTextField(
+            "disc",
+            "TPOS",
+            frame.values[0],
+            frame.sourceOffset,
+            sourceLength
         );
     }
 
@@ -282,6 +316,60 @@ private MetadataField makeScalarTextField(
     assertRegisteredShape(field);
 
     return field;
+}
+
+
+/++
+Parses and constructs one canonical track/disc position field.
+
+Invalid native position text remains preserved native metadata but is not
+silently normalized into invented canonical semantics.
++/
+private Id3v24CanonicalTextMappingResult
+mapPositionTextField(
+    string canonicalKey,
+    string nativeIdentifier,
+    string value,
+    size_t sourceOffset,
+    size_t sourceLength
+)
+    @safe
+{
+    const parsed = parseId3v2Position(value);
+
+    if (!parsed.parsed)
+    {
+        return Id3v24CanonicalTextMappingResult
+            .unrepresentable();
+    }
+
+    MetadataPosition position =
+        parsed.value.hasTotal
+            ? MetadataPosition.numberAndTotal(
+                parsed.value.number,
+                parsed.value.total
+            )
+            : MetadataPosition.numberOnly(
+                parsed.value.number
+            );
+
+    auto field =
+        MetadataField(
+            MetadataKey(canonicalKey),
+            MetadataValue(position),
+            [
+                makeProvenance(
+                    nativeIdentifier,
+                    sourceOffset,
+                    sourceLength
+                )
+            ]
+        );
+
+    assertRegisteredShape(field);
+
+    return Id3v24CanonicalTextMappingResult
+        .success(field);
 }
 
 
@@ -635,6 +723,92 @@ unittest
         Id3v24CanonicalTextMappingStatus
             .unsupportedFrame
     );
+}
+
+
+/// TRCK maps number/total to canonical track position.
+unittest
+{
+    auto result =
+        mapId3v24TextInformationFrameToCanonical(
+            testFrame("TRCK", ["004/009"], 1500),
+            19
+        );
+
+    assert(result.mapped);
+    assert(result.field.key.name == "track");
+
+    assert(
+        result.field.value.match!(
+            (MetadataPosition position) =>
+                position.hasNumber &&
+                position.number == 4 &&
+                position.hasTotal &&
+                position.total == 9,
+            _ => false
+        )
+    );
+
+    assert(
+        result.field.provenance[0].native.identifier ==
+        "TRCK"
+    );
+    assert(result.field.provenance[0].sourceOffset == 1500);
+    assert(result.field.provenance[0].sourceLength == 19);
+}
+
+
+/// TPOS maps number-only text to canonical disc position.
+unittest
+{
+    auto result =
+        mapId3v24TextInformationFrameToCanonical(
+            testFrame("TPOS", ["2"])
+        );
+
+    assert(result.mapped);
+    assert(result.field.key.name == "disc");
+
+    assert(
+        result.field.value.match!(
+            (MetadataPosition position) =>
+                position.hasNumber &&
+                position.number == 2 &&
+                !position.hasTotal,
+            _ => false
+        )
+    );
+}
+
+
+/// Invalid and multi-valued ID3v2.4 positions remain native-only.
+unittest
+{
+    foreach (
+        values;
+        [
+            [""],
+            ["/9"],
+            ["4/"],
+            ["4//9"],
+            [" 4"],
+            ["18446744073709551616"],
+            ["1", "2"]
+        ]
+    )
+    {
+        auto result =
+            mapId3v24TextInformationFrameToCanonical(
+                testFrame("TRCK", values)
+            );
+
+        assert(!result.mapped);
+        assert(
+            result.status ==
+            Id3v24CanonicalTextMappingStatus
+                .unrepresentableValueShape
+        );
+    }
 }
 
 
