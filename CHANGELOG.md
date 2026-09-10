@@ -41,6 +41,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Lossless ID3v2.3 `recordingDate` write decomposition into deterministic `TYER`/`TDAT`/`TIME` components, rejecting unsupported precision and component shapes.
 - Compound ID3v2.3 recording-time group write planning for preservation, regeneration, removal and missing-component insertion.
 - Physical ID3v2.3 `TYER`/`TDAT`/`TIME` component frame serialization for new and structurally regenerated recording-time frames.
+- End-to-end canonical ID3v2.3 `recordingDate` writeback through compound `TYER`/`TDAT`/`TIME` planning, regeneration, removal and insertion.
 - Zero-copy MP3 suffix locator for fixed trailing ID3v1 `TAG` blocks.
 - Combined zero-copy MP3 edge layout for leading ID3v2, opaque middle bytes and trailing ID3v1.
 

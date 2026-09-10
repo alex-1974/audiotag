@@ -51,6 +51,19 @@ import audiotag.id3v2.v23.frame_preserve_write :
 import audiotag.id3v2.v23.frame_write_plan :
     Id3v23FrameWriteAction;
 
+import audiotag.id3v2.v23.recording_time_frame_write :
+    serializeNewId3v23RecordingTimeComponentFrame,
+    serializeRegeneratedId3v23RecordingTimeComponentFrame;
+
+import audiotag.id3v2.v23.recording_time_group_write_plan :
+    Id3v23RecordingTimeComponentWriteAction,
+    Id3v23RecordingTimeComponentWritePlan,
+    Id3v23RecordingTimeGroupWritePlan,
+    Id3v23RecordingTimeGroupWriteStatus;
+
+import audiotag.id3v2.v23.regeneration_policy :
+    planId3v23MappedFrameRegenerationFormat;
+
 import audiotag.id3v2.v23.planned_frame_write :
     serializeId3v23PlannedNewFrame,
     serializeId3v23PlannedRegeneration;
@@ -104,6 +117,135 @@ private void appendFrameBytes(
     @safe
 {
     output ~= frame;
+}
+
+
+private struct RecordingTimeComponentLookup
+{
+    bool found;
+    Id3v23RecordingTimeComponentWritePlan plan;
+}
+
+
+private RecordingTimeComponentLookup
+findRecordingTimeSourceComponent(
+    const(Id3v23RecordingTimeGroupWritePlan) group,
+    size_t sourceFrameIndex
+)
+    @safe pure nothrow @nogc
+{
+    if (group.year.hasSourceFrame &&
+        group.year.sourceFrameIndex == sourceFrameIndex)
+        return RecordingTimeComponentLookup(true, group.year);
+
+    if (group.date.hasSourceFrame &&
+        group.date.sourceFrameIndex == sourceFrameIndex)
+        return RecordingTimeComponentLookup(true, group.date);
+
+    if (group.time.hasSourceFrame &&
+        group.time.sourceFrameIndex == sourceFrameIndex)
+        return RecordingTimeComponentLookup(true, group.time);
+
+    return RecordingTimeComponentLookup.init;
+}
+
+
+private Id3v23FrameWriteAction
+sourceFrameActionFor(
+    Id3v23RecordingTimeComponentWriteAction action
+)
+    @safe pure nothrow @nogc
+{
+    final switch (action)
+    {
+        case Id3v23RecordingTimeComponentWriteAction.preserveOriginal:
+            return Id3v23FrameWriteAction.preserveOriginal;
+        case Id3v23RecordingTimeComponentWriteAction.regenerateExisting:
+            return Id3v23FrameWriteAction.regenerate;
+        case Id3v23RecordingTimeComponentWriteAction.discardExisting:
+            return Id3v23FrameWriteAction.discard;
+        case Id3v23RecordingTimeComponentWriteAction.rejectWrite:
+            return Id3v23FrameWriteAction.rejectWrite;
+        case Id3v23RecordingTimeComponentWriteAction.absent:
+        case Id3v23RecordingTimeComponentWriteAction.appendNew:
+            assert(false);
+    }
+}
+
+
+private size_t
+lastRecordingTimeSourceFrameIndex(
+    const(Id3v23RecordingTimeGroupWritePlan) group
+)
+    @safe pure nothrow @nogc
+{
+    bool found;
+    size_t result;
+
+    if (group.year.hasSourceFrame)
+    {
+        found = true;
+        result = group.year.sourceFrameIndex;
+    }
+
+    if (group.date.hasSourceFrame &&
+        (!found || group.date.sourceFrameIndex > result))
+    {
+        found = true;
+        result = group.date.sourceFrameIndex;
+    }
+
+    if (group.time.hasSourceFrame &&
+        (!found || group.time.sourceFrameIndex > result))
+    {
+        found = true;
+        result = group.time.sourceFrameIndex;
+    }
+
+    assert(found);
+    return result;
+}
+
+
+private SerializationResult!(ubyte[])
+serializeAppendedRecordingTimeComponents(
+    const(Id3v23RecordingTimeGroupWritePlan) group
+)
+    @safe
+{
+    if (!group.writable)
+    {
+        return SerializationResult!(ubyte[]).failure(
+            SerializationError(
+                SerializationErrorCode.unsupportedRepresentation
+            )
+        );
+    }
+
+    ubyte[] output;
+
+    const components =
+        [group.year, group.date, group.time];
+
+    foreach (const component; components)
+    {
+        if (component.action !=
+            Id3v23RecordingTimeComponentWriteAction.appendNew)
+            continue;
+
+        auto serialized =
+            serializeNewId3v23RecordingTimeComponentFrame(
+                component.component,
+                component.value
+            );
+
+        if (serialized.hasError)
+            return SerializationResult!(ubyte[]).failure(serialized.error);
+
+        output ~= serialized.value;
+    }
+
+    return SerializationResult!(ubyte[]).success(output);
 }
 
 
@@ -168,7 +310,8 @@ serializeId3v23PlannedFrameSequence(
     }
 
     if (
-        plan.newFrames.length !=
+        plan.newFrames.length +
+            plan.newRecordingTimeGroups.length !=
         edit.newFields.length
     )
     {
@@ -177,8 +320,10 @@ serializeId3v23PlannedFrameSequence(
                 SerializationError(
                     SerializationErrorCode
                         .inconsistentStructure,
-                    plan.newFrames.length,
-                    plan.newFrames.length,
+                    plan.newFrames.length +
+                        plan.newRecordingTimeGroups.length,
+                    plan.newFrames.length +
+                        plan.newRecordingTimeGroups.length,
                     edit.newFields.length
                 )
             );
@@ -233,6 +378,27 @@ serializeId3v23PlannedFrameSequence(
                 );
         }
 
+        const recordingTime =
+            findRecordingTimeSourceComponent(
+                plan.recordingTimeGroup,
+                entry.sourceFrameIndex
+            );
+
+        if (
+            recordingTime.found &&
+            sourceFrameActionFor(recordingTime.plan.action) !=
+                entry.plan.action
+        )
+        {
+            return
+                writerFailure(
+                    SerializationError(
+                        SerializationErrorCode.inconsistentStructure,
+                        entry.sourceFrameIndex
+                    )
+                );
+        }
+
         final switch (entry.plan.action)
         {
             case Id3v23FrameWriteAction
@@ -265,6 +431,37 @@ serializeId3v23PlannedFrameSequence(
             case Id3v23FrameWriteAction
                 .regenerate:
             {
+                if (recordingTime.found)
+                {
+                    auto formatPlan =
+                        planId3v23MappedFrameRegenerationFormat(
+                            projection.frames[
+                                entry.sourceFrameIndex
+                            ].native.envelope,
+                            sourceTagUnsynchronised
+                        );
+
+                    if (formatPlan.hasError)
+                    {
+                        return
+                            Id3v23FrameSequenceSerializationResult
+                                .failure(formatPlan.error);
+                    }
+
+                    auto serialized =
+                        serializeRegeneratedId3v23RecordingTimeComponentFrame(
+                            recordingTime.plan.component,
+                            recordingTime.plan.value,
+                            formatPlan.value
+                        );
+
+                    if (serialized.hasError)
+                        return writerFailure(serialized.error);
+
+                    appendFrameBytes(output, serialized.value);
+                    break;
+                }
+
                 /*
                  * The sequence plan identifies the source frame while
                  * `plan.regenerations` carries the semantic regeneration
@@ -366,42 +563,110 @@ serializeId3v23PlannedFrameSequence(
                         )
                     );
         }
+
+        if (
+            plan.recordingTimeGroup.status ==
+                Id3v23RecordingTimeGroupWriteStatus.ready &&
+            entry.sourceFrameIndex ==
+                lastRecordingTimeSourceFrameIndex(
+                    plan.recordingTimeGroup
+                )
+        )
+        {
+            auto appended =
+                serializeAppendedRecordingTimeComponents(
+                    plan.recordingTimeGroup
+                );
+
+            if (appended.hasError)
+                return writerFailure(appended.error);
+
+            appendFrameBytes(output, appended.value);
+        }
     }
 
     /*
-     * New canonical fields currently carry no insertion point among
-     * native source frames.
-     *
-     * Initial deterministic placement policy:
-     *
-     *     surviving existing frames
-     *     followed by
-     *     new frames in edit/plan order.
+     * New canonical fields have no source-native insertion point. Preserve
+     * canonical edit order across ordinary and compound targets.
      */
-    foreach (
-        newFramePlanIndex;
-        0 .. plan.newFrames.length
-    )
+    foreach (newFieldIndex; 0 .. edit.newFields.length)
     {
-        auto serialized =
-            serializeId3v23PlannedNewFrame(
-                edit,
-                plan,
-                newFramePlanIndex
-            );
+        size_t ordinaryPlanIndex;
+        size_t ordinaryMatchCount;
 
-        if (serialized.hasError)
+        foreach (candidateIndex, const candidate; plan.newFrames)
+        {
+            if (candidate.newFieldIndex == newFieldIndex)
+            {
+                ordinaryPlanIndex = candidateIndex;
+                ++ordinaryMatchCount;
+            }
+        }
+
+        size_t recordingTimePlanIndex;
+        size_t recordingTimeMatchCount;
+
+        foreach (candidateIndex, const candidate; plan.newRecordingTimeGroups)
+        {
+            if (candidate.newFieldIndex == newFieldIndex)
+            {
+                recordingTimePlanIndex = candidateIndex;
+                ++recordingTimeMatchCount;
+            }
+        }
+
+        if (ordinaryMatchCount + recordingTimeMatchCount != 1)
         {
             return
                 writerFailure(
-                    serialized.error
+                    SerializationError(
+                        SerializationErrorCode.inconsistentStructure,
+                        newFieldIndex,
+                        ordinaryMatchCount + recordingTimeMatchCount,
+                        1
+                    )
                 );
         }
 
-        appendFrameBytes(
-            output,
-            serialized.value
-        );
+        if (ordinaryMatchCount == 1)
+        {
+            auto serialized =
+                serializeId3v23PlannedNewFrame(
+                    edit,
+                    plan,
+                    ordinaryPlanIndex
+                );
+
+            if (serialized.hasError)
+                return writerFailure(serialized.error);
+
+            appendFrameBytes(output, serialized.value);
+            continue;
+        }
+
+        const recordingTimePlan =
+            plan.newRecordingTimeGroups[recordingTimePlanIndex];
+
+        if (!recordingTimePlan.writable)
+        {
+            return
+                writerFailure(
+                    SerializationError(
+                        SerializationErrorCode.unsupportedRepresentation,
+                        newFieldIndex
+                    )
+                );
+        }
+
+        auto serialized =
+            serializeAppendedRecordingTimeComponents(
+                recordingTimePlan.group
+            );
+
+        if (serialized.hasError)
+            return writerFailure(serialized.error);
+
+        appendFrameBytes(output, serialized.value);
     }
 
     return

@@ -18,18 +18,20 @@ container updating remain later steps.
 +/
 module audiotag.id3v2.v23.tag_write_plan;
 
-import audiotag.id3v2.common.tag_write_plan :
-    planId3v2CanonicalTagWrite;
-
 import audiotag.metadata.edit :
+    MetadataSourceFieldEditState,
     MetadataTreeEdit;
 
 import audiotag.metadata.edit_validation :
-    MetadataTreeEditMultiplicityResult;
+    MetadataTreeEditMultiplicityResult,
+    validateMetadataTreeEditMultiplicity;
 
 import audiotag.id3v2.v23.canonical_projection :
     Id3v23CanonicalFrameRecord,
     Id3v23CanonicalProjection;
+
+import audiotag.id3v2.v23.canonical_recording_time :
+    isId3v23RecordingTimeFrameId;
 
 import audiotag.id3v2.v23.edit_mutation :
     deriveId3v23CanonicalFrameMutations;
@@ -42,6 +44,14 @@ import audiotag.id3v2.v23.new_frame_plan :
     Id3v23NewFramePlan,
     planId3v23CanonicalField,
     planId3v23NewCanonicalFrame;
+
+import audiotag.id3v2.v23.recording_time_group_write_plan :
+    Id3v23RecordingTimeComponentWriteAction,
+    Id3v23RecordingTimeComponentWritePlan,
+    Id3v23RecordingTimeGroupWritePlan,
+    Id3v23RecordingTimeGroupWriteStatus,
+    planId3v23ExistingRecordingTimeGroup,
+    planId3v23NewRecordingTimeGroup;
 
 import audiotag.id3v2.v23.sequence_write_plan :
     Id3v23FrameSequenceWritePlan,
@@ -99,6 +109,30 @@ struct Id3v23ExistingFrameRegenerationPlan
 
 
 /++
+Write plan for one newly introduced canonical `recordingDate`.
+
+One canonical field may generate up to three native frames. A source conflict
+prevents creating a second native time group when unmapped TYER/TDAT/TIME
+frames already exist.
++/
+struct Id3v23NewRecordingTimeGroupPlan
+{
+    size_t newFieldIndex;
+    bool sourceTemporalConflict;
+    Id3v23RecordingTimeGroupWritePlan group;
+
+    @property
+    bool writable() const
+        @safe pure nothrow @nogc
+    {
+        return
+            !sourceTemporalConflict &&
+            group.writable;
+    }
+}
+
+
+/++
 Complete semantic write plan for one edited ID3v2.3 tag.
 
 The plan retains every relevant sub-plan so callers can inspect why a
@@ -109,9 +143,11 @@ struct Id3v23TagWritePlan
 private:
     Id3v23ExistingFrameRegenerationPlan[] _regenerations;
     Id3v23NewFramePlan[] _newFrames;
+    Id3v23NewRecordingTimeGroupPlan[] _newRecordingTimeGroups;
 
     size_t _regenerationRejectCount;
     size_t _newFrameRejectCount;
+    size_t _newRecordingTimeRejectCount;
 
 public:
     /// Canonical resulting-tree multiplicity validation.
@@ -119,6 +155,9 @@ public:
 
     /// Preservation actions for every existing native frame.
     Id3v23FrameSequenceWritePlan existingFrames;
+
+    /// Compound source TYER/TDAT/TIME plan; `absent` when none is mapped.
+    Id3v23RecordingTimeGroupWritePlan recordingTimeGroup;
 
     /++
     Regeneration details for modified existing native frames.
@@ -153,12 +192,28 @@ public:
         return _regenerations.length;
     }
 
-    /// Number of newly introduced canonical fields.
+    /// Number of newly introduced ordinary one-frame canonical fields.
     @property
     size_t newFrameCount() const
         @safe pure nothrow @nogc
     {
         return _newFrames.length;
+    }
+
+    /// Newly introduced compound recording-time fields.
+    @property
+    const(Id3v23NewRecordingTimeGroupPlan)[]
+    newRecordingTimeGroups() const
+        @safe pure nothrow @nogc
+    {
+        return _newRecordingTimeGroups;
+    }
+
+    @property
+    size_t newRecordingTimeGroupCount() const
+        @safe pure nothrow @nogc
+    {
+        return _newRecordingTimeGroups.length;
     }
 
     /// Number of replacement/regeneration plans that block writing.
@@ -169,12 +224,19 @@ public:
         return _regenerationRejectCount;
     }
 
-    /// Number of new canonical fields that cannot currently be written.
+    /// Number of new ordinary canonical fields that cannot be written.
     @property
     size_t newFrameRejectCount() const
         @safe pure nothrow @nogc
     {
         return _newFrameRejectCount;
+    }
+
+    @property
+    size_t newRecordingTimeRejectCount() const
+        @safe pure nothrow @nogc
+    {
+        return _newRecordingTimeRejectCount;
     }
 
     /++
@@ -196,8 +258,10 @@ public:
         return
             multiplicity.valid &&
             existingFrames.writable &&
+            recordingTimeGroup.writable &&
             _regenerationRejectCount == 0 &&
-            _newFrameRejectCount == 0;
+            _newFrameRejectCount == 0 &&
+            _newRecordingTimeRejectCount == 0;
     }
 
 package(audiotag.id3v2):
@@ -222,67 +286,143 @@ package(audiotag.id3v2):
         if (!plan.writable)
             ++_newFrameRejectCount;
     }
+
+    void appendNewRecordingTimeGroup(
+        Id3v23NewRecordingTimeGroupPlan plan
+    )
+        @safe
+    {
+        _newRecordingTimeGroups ~= plan;
+
+        if (!plan.writable)
+            ++_newRecordingTimeRejectCount;
+    }
 }
 
 
-/++
-Compile-time binding of ID3v2.3 tag-write planning types and functions
-to the common ID3v2 orchestration algorithm.
-
-The traits object is configuration only. It does not generate or replace
-the concrete revision-specific plan types.
-+/
-private struct Id3v23TagWriteTraits
+private bool
+isRecordingTimeFrame(
+    const(Id3v23CanonicalFrameRecord) record
+)
+    @safe pure nothrow @nogc
 {
-    alias CanonicalProjection =
-        Id3v23CanonicalProjection;
+    return
+        isId3v23RecordingTimeFrameId(
+            record.native.envelope.header.id
+        );
+}
 
-    alias CanonicalFrameRecord =
-        Id3v23CanonicalFrameRecord;
 
-    alias CanonicalFrameMutation =
-        Id3v23CanonicalFrameMutation;
+private bool
+hasAnyRecordingTimeFrame(
+    const(Id3v23CanonicalProjection) projection
+)
+    @safe pure nothrow @nogc
+{
+    foreach (const record; projection.frames)
+    {
+        if (isRecordingTimeFrame(record))
+            return true;
+    }
 
-    alias ExistingFrameRegenerationStatus =
-        Id3v23ExistingFrameRegenerationStatus;
+    return false;
+}
 
-    alias ExistingFrameRegenerationPlan =
-        Id3v23ExistingFrameRegenerationPlan;
 
-    alias CanonicalFieldPlan =
-        Id3v23CanonicalFieldPlan;
+private void
+applyRecordingTimeComponentMutation(
+    ref Id3v23CanonicalFrameMutation[] mutations,
+    const(Id3v23RecordingTimeComponentWritePlan) component
+)
+    @safe pure nothrow @nogc
+{
+    if (!component.hasSourceFrame)
+        return;
 
-    alias TagWritePlan =
-        Id3v23TagWritePlan;
+    assert(component.sourceFrameIndex < mutations.length);
 
-    alias deriveMutations =
-        deriveId3v23CanonicalFrameMutations;
+    final switch (component.action)
+    {
+        case Id3v23RecordingTimeComponentWriteAction.preserveOriginal:
+            mutations[component.sourceFrameIndex] =
+                Id3v23CanonicalFrameMutation.unchanged;
+            break;
 
-    alias planCanonicalField =
-        planId3v23CanonicalField;
+        case Id3v23RecordingTimeComponentWriteAction.regenerateExisting:
+            mutations[component.sourceFrameIndex] =
+                Id3v23CanonicalFrameMutation.modified;
+            break;
 
-    alias planExistingSequence =
-        planId3v23ExistingFrameSequenceWrite;
+        case Id3v23RecordingTimeComponentWriteAction.discardExisting:
+            mutations[component.sourceFrameIndex] =
+                Id3v23CanonicalFrameMutation.removed;
+            break;
 
-    alias planNewFrame =
-        planId3v23NewCanonicalFrame;
+        case Id3v23RecordingTimeComponentWriteAction.rejectWrite:
+            mutations[component.sourceFrameIndex] =
+                Id3v23CanonicalFrameMutation.modified;
+            break;
+
+        case Id3v23RecordingTimeComponentWriteAction.absent:
+        case Id3v23RecordingTimeComponentWriteAction.appendNew:
+            assert(false);
+    }
+}
+
+
+private Id3v23ExistingFrameRegenerationPlan
+planOrdinaryExistingFrameRegeneration(
+    size_t sourceFrameIndex,
+    const(Id3v23CanonicalFrameRecord) record,
+    const(MetadataTreeEdit) edit
+)
+    @safe
+{
+    if (record.canonicalCount != 1)
+    {
+        return
+            Id3v23ExistingFrameRegenerationPlan(
+                sourceFrameIndex,
+                record.canonicalStart,
+                Id3v23ExistingFrameRegenerationStatus
+                    .unsupportedCanonicalShape,
+                Id3v23CanonicalFieldPlan.init
+            );
+    }
+
+    const canonicalSourceIndex = record.canonicalStart;
+    const sourceEdit = edit.sourceEdit(canonicalSourceIndex);
+
+    assert(
+        sourceEdit.state ==
+        MetadataSourceFieldEditState.modified
+    );
+
+    const fieldPlan =
+        planId3v23CanonicalField(
+            sourceEdit.replacement
+        );
+
+    return
+        Id3v23ExistingFrameRegenerationPlan(
+            sourceFrameIndex,
+            canonicalSourceIndex,
+            fieldPlan.writable
+                ? Id3v23ExistingFrameRegenerationStatus.ready
+                : Id3v23ExistingFrameRegenerationStatus
+                    .unrepresentableField,
+            fieldPlan
+        );
 }
 
 
 /++
 Plans the complete semantic write of one edited ID3v2.3 tag.
 
-The orchestration is shared across ID3v2 revisions while all concrete
-result and sub-plan types remain revision-specific.
-
-Params:
-    projection = Canonical projection of the parsed native tag.
-    edit = Canonical edit overlay.
-    context = Whether the enclosing tag and/or file is being altered.
-    policy = Native preservation policy.
-
-Returns:
-    Complete semantic tag write plan.
+Ordinary canonical fields retain the one-native-frame write path.
+`recordingDate` is the revision-specific exception: mapped TYER/TDAT/TIME
+frames are planned as one compound group and excluded from ordinary
+regeneration. New `recordingDate` fields are likewise compound plans.
 +/
 Id3v23TagWritePlan
 planId3v23CanonicalTagWrite(
@@ -294,15 +434,114 @@ planId3v23CanonicalTagWrite(
 )
     @safe
 {
-    return
-        planId3v2CanonicalTagWrite!(
-            Id3v23TagWriteTraits
-        )(
+    const source = projection.metadata;
+
+    assert(edit.sourceFieldCount == source.length);
+
+    auto result = Id3v23TagWritePlan.init;
+
+    result.multiplicity =
+        validateMetadataTreeEditMultiplicity(
+            source,
+            edit
+        );
+
+    auto mutations =
+        deriveId3v23CanonicalFrameMutations(
+            projection.frames,
+            edit
+        );
+
+    result.recordingTimeGroup =
+        planId3v23ExistingRecordingTimeGroup(
             projection,
             edit,
             context,
             policy
         );
+
+    if (
+        result.recordingTimeGroup.status ==
+        Id3v23RecordingTimeGroupWriteStatus.ready
+    )
+    {
+        applyRecordingTimeComponentMutation(
+            mutations,
+            result.recordingTimeGroup.year
+        );
+        applyRecordingTimeComponentMutation(
+            mutations,
+            result.recordingTimeGroup.date
+        );
+        applyRecordingTimeComponentMutation(
+            mutations,
+            result.recordingTimeGroup.time
+        );
+    }
+
+    result.existingFrames =
+        planId3v23ExistingFrameSequenceWrite(
+            projection.frames,
+            mutations,
+            context,
+            policy
+        );
+
+    foreach (sourceFrameIndex, ref const record; projection.frames)
+    {
+        if (
+            mutations[sourceFrameIndex] !=
+            Id3v23CanonicalFrameMutation.modified
+        )
+            continue;
+
+        if (isRecordingTimeFrame(record))
+            continue;
+
+        result.appendRegeneration(
+            planOrdinaryExistingFrameRegeneration(
+                sourceFrameIndex,
+                record,
+                edit
+            )
+        );
+    }
+
+    const sourceHasTemporalFrames =
+        hasAnyRecordingTimeFrame(projection);
+
+    foreach (newFieldIndex, ref const field; edit.newFields)
+    {
+        if (field.key.name == "recordingDate")
+        {
+            const group =
+                planId3v23NewRecordingTimeGroup(field);
+
+            const sourceTemporalConflict =
+                sourceHasTemporalFrames &&
+                result.recordingTimeGroup.status ==
+                    Id3v23RecordingTimeGroupWriteStatus.absent;
+
+            result.appendNewRecordingTimeGroup(
+                Id3v23NewRecordingTimeGroupPlan(
+                    newFieldIndex,
+                    sourceTemporalConflict,
+                    group
+                )
+            );
+
+            continue;
+        }
+
+        result.appendNewFrame(
+            planId3v23NewCanonicalFrame(
+                newFieldIndex,
+                field
+            )
+        );
+    }
+
+    return result;
 }
 
 
