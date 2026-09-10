@@ -29,6 +29,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Provenance-preserving ID3v1 canonical projection for title, artist, album, comment and ID3v1.1 track number.
 - Canonical position value and stable `track`/`disc` registry keys with independently optional number and total components.
 - Canonical `genre` registry key using an ordered text list so multiple free-form genres remain representable across tag systems.
+- Shared ID3 numeric genre registry covering codes 0-191 with explicit unknown-code handling and legacy reverse-lookup aliases.
 - Zero-copy MP3 suffix locator for fixed trailing ID3v1 `TAG` blocks.
 - Combined zero-copy MP3 edge layout for leading ID3v2, opaque middle bytes and trailing ID3v1.
 
