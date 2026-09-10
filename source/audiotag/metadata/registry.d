@@ -294,6 +294,12 @@ private immutable MetadataFieldDefinition[] definitions =
         MetadataKey("disc"),
         MetadataValueKind.position,
         MetadataMultiplicity.single
+    ),
+
+    MetadataFieldDefinition(
+        MetadataKey("genre"),
+        MetadataValueKind.textList,
+        MetadataMultiplicity.single
     )
 ];
 
@@ -646,6 +652,51 @@ unittest
 }
 
 
+/// Genre is one semantic field containing an ordered genre list.
+unittest
+{
+    auto definition =
+        findMetadataFieldDefinition(
+            MetadataKey("genre")
+        );
+
+    assert(definition.found);
+
+    assert(
+        definition.definition.valueKind ==
+        MetadataValueKind.textList
+    );
+
+    assert(
+        definition.definition.multiplicity ==
+        MetadataMultiplicity.single
+    );
+
+    assert(
+        definition.definition.accepts(
+            MetadataValue(
+                MetadataTextList(
+                    [
+                        "Electronic",
+                        "Ambient"
+                    ]
+                )
+            )
+        )
+    );
+
+    assert(
+        !definition.definition.accepts(
+            MetadataValue(
+                MetadataText(
+                    "Electronic"
+                )
+            )
+        )
+    );
+}
+
+
 /// Unknown canonical keys remain explicitly unregistered.
 unittest
 {
@@ -664,7 +715,7 @@ unittest
     const registry =
         metadataFieldDefinitions();
 
-    assert(registry.length == 20);
+    assert(registry.length == 21);
 
     assert(registry[0].key.name == "title");
     assert(registry[1].key.name == "artist");
@@ -686,4 +737,5 @@ unittest
     assert(registry[17].key.name == "uniqueFileIdentifier");
     assert(registry[18].key.name == "track");
     assert(registry[19].key.name == "disc");
+    assert(registry[20].key.name == "genre");
 }
