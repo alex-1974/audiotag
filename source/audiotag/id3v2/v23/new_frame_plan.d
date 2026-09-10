@@ -29,6 +29,7 @@ import audiotag.metadata.registry :
 
 import audiotag.metadata.value :
     MetadataBinary,
+    MetadataDateTimeList,
     MetadataInteger,
     MetadataPicture,
     MetadataPosition,
@@ -178,7 +179,10 @@ valueKindOf(
             MetadataValueKind.picture,
 
         (const(MetadataPosition) value) =>
-            MetadataValueKind.position
+            MetadataValueKind.position,
+
+        (const(MetadataDateTimeList) value) =>
+            MetadataValueKind.dateTimeList
     );
 }
 

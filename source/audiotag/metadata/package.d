@@ -26,6 +26,8 @@ public import audiotag.metadata.value :
     MetadataTextList,
     MetadataInteger,
     MetadataPosition,
+    MetadataDateTime,
+    MetadataDateTimeList,
     MetadataUrl,
     MetadataBinary,
     MetadataPictureSource,

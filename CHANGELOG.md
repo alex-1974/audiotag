@@ -32,6 +32,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Canonical `genre` registry key using an ordered text list so multiple free-form genres remain representable across tag systems.
 - Shared ID3 numeric genre registry covering codes 0-191 with explicit unknown-code handling and legacy reverse-lookup aliases.
 - ID3v2.3 and ID3v2.4 `TCON` canonical genre projection with revision-specific legacy numeric syntax, free-text preservation and `RX`/`CR` handling.
+- Precision-preserving canonical date/time value foundation and stable `recordingDate` registry key for cross-format temporal metadata.
 - Zero-copy MP3 suffix locator for fixed trailing ID3v1 `TAG` blocks.
 - Combined zero-copy MP3 edge layout for leading ID3v2, opaque middle bytes and trailing ID3v1.
 

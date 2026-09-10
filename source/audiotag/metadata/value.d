@@ -126,6 +126,173 @@ struct MetadataPosition
 }
 
 
+
+/++
+Canonical partial date/time value.
+
+Audio metadata formats expose temporal information with different precision
+and structure:
+
+- some provide only a year;
+- some provide calendar and clock components independently;
+- some provide a complete timestamp;
+- some specify UTC or an explicit UTC offset;
+- some support fractional seconds.
+
+Each component therefore has an explicit presence flag. No numeric sentinel is
+used for absence. This permits native mappings such as ID3v2.3 to retain
+month/day or hour/minute information even when another date component is not
+present.
+
+`fractionalSecondNanoseconds` stores the fractional part scaled to nanoseconds.
+`fractionalSecondDigits` records the source semantic precision from 1 through
+9 when `hasFractionalSecond` is true. For example, `.125` is represented as
+125_000_000 nanoseconds with three fractional digits.
+
+`hasUtcOffset` distinguishes an unspecified/floating time from one whose UTC
+offset is known. An offset of zero therefore represents UTC explicitly.
+
+This value type intentionally does not impose calendar, clock, component-
+dependency or offset-range invariants. Native syntax and semantic validation
+belong to codec/mapping layers, as with `MetadataPosition`. The canonical type
+only preserves semantic components that a mapper has already validated.
++/
+struct MetadataDateTime
+{
+    bool hasYear;
+    long year;
+
+    bool hasMonth;
+    ubyte month;
+
+    bool hasDay;
+    ubyte day;
+
+    bool hasHour;
+    ubyte hour;
+
+    bool hasMinute;
+    ubyte minute;
+
+    bool hasSecond;
+    ubyte second;
+
+    bool hasFractionalSecond;
+    uint fractionalSecondNanoseconds;
+    ubyte fractionalSecondDigits;
+
+    bool hasUtcOffset;
+    int utcOffsetMinutes;
+
+
+    /// Constructs a year-only temporal value.
+    static MetadataDateTime yearOnly(long year)
+        @safe pure nothrow @nogc
+    {
+        MetadataDateTime result;
+        result.hasYear = true;
+        result.year = year;
+        return result;
+    }
+
+
+    /// Constructs a year-and-month temporal value.
+    static MetadataDateTime yearMonth(
+        long year,
+        ubyte month
+    )
+        @safe pure nothrow @nogc
+    {
+        auto result =
+            yearOnly(
+                year
+            );
+
+        result.hasMonth = true;
+        result.month = month;
+        return result;
+    }
+
+
+    /// Constructs a complete calendar date without a clock value.
+    static MetadataDateTime calendarDate(
+        long year,
+        ubyte month,
+        ubyte day
+    )
+        @safe pure nothrow @nogc
+    {
+        auto result =
+            yearMonth(
+                year,
+                month
+            );
+
+        result.hasDay = true;
+        result.day = day;
+        return result;
+    }
+
+
+    /// Whether any calendar component is present.
+    @property
+    bool hasDate() const
+        @safe pure nothrow @nogc
+    {
+        return
+            hasYear ||
+            hasMonth ||
+            hasDay;
+    }
+
+
+    /// Whether any clock/subsecond component is present.
+    @property
+    bool hasTime() const
+        @safe pure nothrow @nogc
+    {
+        return
+            hasHour ||
+            hasMinute ||
+            hasSecond ||
+            hasFractionalSecond;
+    }
+
+
+    /// Whether no temporal component or UTC offset is present.
+    @property
+    bool empty() const
+        @safe pure nothrow @nogc
+    {
+        return
+            !hasDate &&
+            !hasTime &&
+            !hasUtcOffset;
+    }
+}
+
+
+/++
+Canonical ordered list of partial date/time values.
+
+A list is explicit because several metadata systems can carry multiple
+temporal values for one semantic field. Keeping those values in one canonical
+field avoids inferring separators and permits native mappers to preserve
+source order.
++/
+struct MetadataDateTimeList
+{
+    MetadataDateTime[] values;
+
+    @property
+    bool empty() const
+        @safe pure nothrow @nogc
+    {
+        return values.length == 0;
+    }
+}
+
+
 /++
 Canonical URL value.
 
@@ -269,7 +436,8 @@ alias MetadataValue =
         MetadataUrl,
         MetadataBinary,
         MetadataPicture,
-        MetadataPosition
+        MetadataPosition,
+        MetadataDateTimeList
     );
 
 
@@ -399,6 +567,125 @@ unittest
                 position.number == 4 &&
                 position.hasTotal &&
                 position.total == 9,
+
+            _ => false
+        );
+
+    assert(matches);
+}
+
+
+
+/// Partial date/time values preserve component presence independently.
+unittest
+{
+    const yearOnly =
+        MetadataDateTime.yearOnly(
+            1999
+        );
+
+    assert(!yearOnly.empty);
+    assert(yearOnly.hasDate);
+    assert(!yearOnly.hasTime);
+    assert(yearOnly.hasYear);
+    assert(yearOnly.year == 1999);
+    assert(!yearOnly.hasMonth);
+    assert(!yearOnly.hasDay);
+    assert(!yearOnly.hasUtcOffset);
+
+    MetadataDateTime partial;
+
+    partial.hasMonth = true;
+    partial.month = 6;
+    partial.hasDay = true;
+    partial.day = 12;
+
+    assert(!partial.empty);
+    assert(partial.hasDate);
+    assert(!partial.hasYear);
+    assert(partial.month == 6);
+    assert(partial.day == 12);
+}
+
+
+/// Full temporal detail can retain subsecond precision and UTC offset.
+unittest
+{
+    auto value =
+        MetadataDateTime.calendarDate(
+            2026,
+            9,
+            10
+        );
+
+    value.hasHour = true;
+    value.hour = 13;
+
+    value.hasMinute = true;
+    value.minute = 8;
+
+    value.hasSecond = true;
+    value.second = 42;
+
+    value.hasFractionalSecond = true;
+    value.fractionalSecondNanoseconds = 125_000_000;
+    value.fractionalSecondDigits = 3;
+
+    value.hasUtcOffset = true;
+    value.utcOffsetMinutes = 120;
+
+    assert(value.hasDate);
+    assert(value.hasTime);
+    assert(value.hasUtcOffset);
+    assert(value.utcOffsetMinutes == 120);
+
+    assert(
+        value.fractionalSecondNanoseconds ==
+        125_000_000
+    );
+
+    assert(value.fractionalSecondDigits == 3);
+}
+
+
+/// The default temporal value contains no invented date/time semantics.
+unittest
+{
+    const value =
+        MetadataDateTime.init;
+
+    assert(value.empty);
+    assert(!value.hasDate);
+    assert(!value.hasTime);
+    assert(!value.hasUtcOffset);
+}
+
+
+/// Ordered temporal lists are one distinct canonical MetadataValue family.
+unittest
+{
+    MetadataValue value =
+        MetadataDateTimeList(
+            [
+                MetadataDateTime.yearOnly(
+                    1999
+                ),
+                MetadataDateTime.calendarDate(
+                    2001,
+                    6,
+                    12
+                )
+            ]
+        );
+
+    const matches =
+        value.match!(
+            (MetadataDateTimeList list) =>
+                list.values.length == 2 &&
+                list.values[0].hasYear &&
+                list.values[0].year == 1999 &&
+                list.values[1].hasDay &&
+                list.values[1].day == 12,
 
             _ => false
         );
