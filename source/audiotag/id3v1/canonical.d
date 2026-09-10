@@ -8,13 +8,15 @@ registry:
 - title;
 - artist;
 - album;
+- four-digit release year;
 - comment;
 - ID3v1.1 track number;
 - recognized numeric genre.
 
-The fixed year field remains available in the preserved native `Id3v1Tag` but
-is intentionally not projected until canonical date semantics are defined.
-Genre bytes not recognized by the shared ID3 compatibility registry likewise
+The fixed year field is projected only when all four native bytes are ASCII
+decimal digits. Other year spellings remain available only in the preserved
+native `Id3v1Tag`. Genre bytes not recognized by the shared ID3 compatibility
+registry likewise
 remain available only in the native representation.
 
 Unused NUL-padded text fields produce no canonical field. No whitespace or
@@ -56,6 +58,8 @@ import audiotag.metadata.tree :
     MetadataTree;
 
 import audiotag.metadata.value :
+    MetadataDateTime,
+    MetadataDateTimeList,
     MetadataPosition,
     MetadataText,
     MetadataTextList,
@@ -87,9 +91,10 @@ are currently representable:
 1. title;
 2. artist;
 3. album;
-4. comment;
-5. ID3v1.1 track, when present;
-6. recognized genre.
+4. release year, when the native year is four decimal digits;
+5. comment;
+6. ID3v1.1 track, when present;
+7. recognized genre.
 
 An ID3v1 artist is one native scalar string, while canonical `artist` is a
 text list. Therefore a non-empty native artist becomes a one-element canonical
@@ -128,6 +133,11 @@ projectId3v1TagToCanonical(
         metadata,
         "album",
         tag.album
+    );
+
+    appendReleaseYearIfValid(
+        metadata,
+        tag.year
     );
 
     appendScalarTextIfPresent(
@@ -291,6 +301,101 @@ appendArtistIfPresent(
     metadata.append(
         field
     );
+}
+
+
+/++
+Appends the fixed-width ID3v1 year as a canonical release date when valid.
+
+ID3v1 provides exactly four bytes for its year field. Canonical projection is
+deliberately conservative: all four bytes must be ASCII decimal digits. No
+whitespace trimming, Latin-1 conversion, date inference or range restriction
+is applied.
+
+The resulting canonical value contains only a year. ID3v1 supplies no timezone
+semantics, so no UTC offset is invented. Provenance covers exactly the four
+native year bytes.
++/
+private void
+appendReleaseYearIfValid(
+    ref MetadataTree metadata,
+    ByteSpan raw
+)
+    @safe
+{
+    ushort year;
+
+    if (!parseId3v1Year(raw, year))
+        return;
+
+    auto field =
+        MetadataField(
+            MetadataKey(
+                "releaseDate"
+            ),
+            MetadataValue(
+                MetadataDateTimeList(
+                    [
+                        MetadataDateTime.yearOnly(
+                            year
+                        )
+                    ]
+                )
+            ),
+            [
+                makeProvenance(
+                    "year",
+                    raw
+                )
+            ]
+        );
+
+    assertRegisteredShape(
+        field
+    );
+
+    metadata.append(
+        field
+    );
+}
+
+
+/++
+Parses an exact four-byte ASCII decimal ID3v1 year.
++/
+private bool
+parseId3v1Year(
+    ByteSpan raw,
+    out ushort year
+)
+    @safe pure nothrow @nogc
+{
+    if (raw.length != 4)
+        return false;
+
+    uint value;
+
+    foreach (byteValue; raw.data)
+    {
+        if (
+            byteValue < '0' ||
+            byteValue > '9'
+        )
+        {
+            return false;
+        }
+
+        value =
+            value * 10 +
+            cast(uint)
+                (byteValue - '0');
+    }
+
+    year =
+        cast(ushort)
+            value;
+
+    return true;
 }
 
 
@@ -552,7 +657,7 @@ unittest
     const canonical =
         result.value;
 
-    assert(canonical.metadata.length == 5);
+    assert(canonical.metadata.length == 6);
 
     assert(
         canonical.metadata[0]
@@ -575,11 +680,17 @@ unittest
     assert(
         canonical.metadata[3]
             .key.name ==
-        "comment"
+        "releaseDate"
     );
 
     assert(
         canonical.metadata[4]
+            .key.name ==
+        "comment"
+    );
+
+    assert(
+        canonical.metadata[5]
             .key.name ==
         "genre"
     );
@@ -617,6 +728,20 @@ unittest
     assert(
         canonical.metadata[3]
             .value.match!(
+                (const(MetadataDateTimeList) list) =>
+                    list.values.length == 1 &&
+                    list.values[0].hasYear &&
+                    list.values[0].year == 1999 &&
+                    !list.values[0].hasMonth &&
+                    !list.values[0].hasTime &&
+                    !list.values[0].hasUtcOffset,
+                _ => false
+            )
+    );
+
+    assert(
+        canonical.metadata[4]
+            .value.match!(
                 (const(MetadataText) text) =>
                     text.value ==
                     "Comment",
@@ -625,7 +750,7 @@ unittest
     );
 
     assert(
-        canonical.metadata[4]
+        canonical.metadata[5]
             .value.match!(
                 (const(MetadataTextList) list) =>
                     list.values ==
@@ -668,33 +793,54 @@ unittest
     assert(
         canonical.metadata[3]
             .provenance[0]
+            .native.identifier ==
+        "year"
+    );
+
+    assert(
+        canonical.metadata[3]
+            .provenance[0]
             .sourceOffset ==
-        1097
+        1093
     );
 
     assert(
         canonical.metadata[3]
             .provenance[0]
             .sourceLength ==
-        30
-    );
-
-    assert(
-        canonical.metadata[4]
-            .provenance[0]
-            .native.identifier ==
-        "genre"
+        4
     );
 
     assert(
         canonical.metadata[4]
             .provenance[0]
             .sourceOffset ==
-        1127
+        1097
     );
 
     assert(
         canonical.metadata[4]
+            .provenance[0]
+            .sourceLength ==
+        30
+    );
+
+    assert(
+        canonical.metadata[5]
+            .provenance[0]
+            .native.identifier ==
+        "genre"
+    );
+
+    assert(
+        canonical.metadata[5]
+            .provenance[0]
+            .sourceOffset ==
+        1127
+    );
+
+    assert(
+        canonical.metadata[5]
             .provenance[0]
             .sourceLength ==
         1
@@ -762,7 +908,7 @@ unittest
 }
 
 
-/// ID3v1.1 track and recognized genre project while year remains native.
+/// ID3v1.1 release year, track and recognized genre project canonically.
 unittest
 {
     ubyte[128] bytes;
@@ -811,16 +957,55 @@ unittest
 
     assert(
         canonical.metadata.length ==
-        3
+        4
     );
 
     assert(
         canonical.metadata.count(
             MetadataKey(
-                "date"
+                "releaseDate"
             )
         ) ==
-        0
+        1
+    );
+
+    assert(
+        canonical.metadata[1]
+            .key.name ==
+        "releaseDate"
+    );
+
+    assert(
+        canonical.metadata[1]
+            .value.match!(
+                (const(MetadataDateTimeList) list) =>
+                    list.values.length == 1 &&
+                    list.values[0].hasYear &&
+                    list.values[0].year == 2001 &&
+                    !list.values[0].hasUtcOffset,
+                _ => false
+            )
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .native.identifier ==
+        "year"
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .sourceOffset ==
+        2093
+    );
+
+    assert(
+        canonical.metadata[1]
+            .provenance[0]
+            .sourceLength ==
+        4
     );
 
     assert(
@@ -833,13 +1018,13 @@ unittest
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .key.name ==
         "track"
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .value.match!(
                 (const(MetadataPosition) position) =>
                     position.hasNumber &&
@@ -850,41 +1035,41 @@ unittest
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .provenance.length ==
         1
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .provenance[0]
             .native.system ==
         MetadataSystem.id3v1
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .provenance[0]
             .native.identifier ==
         "track"
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .provenance[0]
             .sourceOffset ==
         2126
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .provenance[0]
             .sourceLength ==
         1
     );
 
     assert(
-        canonical.metadata[1]
+        canonical.metadata[2]
             .provenance[0]
             .confidence ==
         MetadataConfidence.exact
@@ -900,13 +1085,13 @@ unittest
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .key.name ==
         "genre"
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .value.match!(
                 (const(MetadataTextList) list) =>
                     list.values ==
@@ -916,44 +1101,161 @@ unittest
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .provenance.length ==
         1
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .provenance[0]
             .native.system ==
         MetadataSystem.id3v1
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .provenance[0]
             .native.identifier ==
         "genre"
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .provenance[0]
             .sourceOffset ==
         2127
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .provenance[0]
             .sourceLength ==
         1
     );
 
     assert(
-        canonical.metadata[2]
+        canonical.metadata[3]
             .provenance[0]
             .confidence ==
         MetadataConfidence.exact
+    );
+}
+
+
+
+/// Non-decimal ID3v1 year bytes remain native-only.
+unittest
+{
+    foreach (
+        invalidYear;
+        [
+            "20A1",
+            " 200",
+            "200 "
+        ]
+    )
+    {
+        ubyte[128] bytes;
+
+        setSignature(bytes);
+
+        putText(
+            bytes,
+            93,
+            invalidYear
+        );
+
+        auto result =
+            parseId3v1CanonicalTag(
+                ByteSpan(
+                    bytes[]
+                )
+            );
+
+        assert(result.hasValue);
+
+        assert(
+            result.value.metadata.count(
+                MetadataKey(
+                    "releaseDate"
+                )
+            ) ==
+            0
+        );
+
+        assert(
+            decodeId3v1Latin1Text(
+                result.value.native.year
+            ) ==
+            invalidYear
+        );
+    }
+
+    ubyte[128] nulYear;
+    setSignature(nulYear);
+
+    auto result =
+        parseId3v1CanonicalTag(
+            ByteSpan(
+                nulYear[]
+            )
+        );
+
+    assert(result.hasValue);
+
+    assert(
+        result.value.metadata.count(
+            MetadataKey(
+                "releaseDate"
+            )
+        ) ==
+        0
+    );
+}
+
+
+/// Four decimal zeroes remain an explicit year rather than an absence sentinel.
+unittest
+{
+    ubyte[128] bytes;
+
+    setSignature(bytes);
+
+    putText(
+        bytes,
+        93,
+        "0000"
+    );
+
+    auto result =
+        parseId3v1CanonicalTag(
+            ByteSpan(
+                bytes[]
+            )
+        );
+
+    assert(result.hasValue);
+
+    assert(
+        result.value.metadata.count(
+            MetadataKey(
+                "releaseDate"
+            )
+        ) ==
+        1
+    );
+
+    assert(
+        result.value.metadata[0]
+            .value.match!(
+                (const(MetadataDateTimeList) list) =>
+                    list.values.length == 1 &&
+                    list.values[0].hasYear &&
+                    list.values[0].year == 0 &&
+                    !list.values[0].hasUtcOffset,
+                _ => false
+            )
     );
 }
 

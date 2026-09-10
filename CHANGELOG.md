@@ -35,6 +35,7 @@ The project intends to follow Semantic Versioning once release versions begin.
 - Precision-preserving canonical date/time value foundation and stable `recordingDate` registry key for cross-format temporal metadata.
 - Strict ID3v2.4 timestamp parsing and `TDRC` recording-time projection to ordered canonical UTC date/time values.
 - Stable canonical `releaseDate` key, distinct from `recordingDate`, using the shared precision-preserving date/time-list value family.
+- ID3v1 four-digit year projection to canonical year-only `releaseDate` values with exact native provenance.
 - Zero-copy MP3 suffix locator for fixed trailing ID3v1 `TAG` blocks.
 - Combined zero-copy MP3 edge layout for leading ID3v2, opaque middle bytes and trailing ID3v1.
 
