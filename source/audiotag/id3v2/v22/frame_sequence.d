@@ -1,22 +1,20 @@
 /++
-ID3v2.2 frame-sequence and padding parsing for directly addressable bytes.
+ID3v2.2 frame-sequence and padding parsing.
 
-This module validates one already bounded ID3v2.2 frames-and-padding region
-when whole-tag unsynchronisation has not been applied to the supplied byte
-stream.
+This module validates one already bounded physical ID3v2.2
+frames-and-padding region, with optional whole-tag unsynchronisation decoding
+through the logical data cursor.
 
 The region is partitioned into:
 
 - one or more complete ID3v2.2 frames;
 - optional trailing zero padding.
 
-Frame payloads remain opaque. Whole-tag unsynchronisation requires a later
-logical cursor and is intentionally not handled by this ByteSpan parser.
+Frame payloads remain opaque. Frame boundaries and padding are recognized in
+the logical byte stream so physical unsynchronisation stuffing remains part of
+the preserved source representation without being mistaken for padding.
 +/
 module audiotag.id3v2.v22.frame_sequence;
-
-import audiotag.core.cursor :
-    ByteCursor;
 
 import audiotag.core.error :
     ParseError,
@@ -27,6 +25,9 @@ import audiotag.core.result :
 
 import audiotag.core.span :
     ByteSpan;
+
+import audiotag.id3v2.v22.data_cursor :
+    Id3v22DataCursor;
 
 import audiotag.id3v2.v22.frame :
     parseId3v22FrameEnvelope;
@@ -55,14 +56,17 @@ struct Id3v22FrameSequenceLayout
 Validates and partitions an ID3v2.2 frames-and-padding region.
 
 ID3v2.2 requires at least one complete frame. Padding is optional, may occur
-only after the final frame, and consists entirely of zero bytes.
+only after the final frame, and consists entirely of logical zero bytes.
 
-This overload expects directly addressable logical bytes. It must not be used
-to interpret a physical whole-tag-unsynchronised body before that body has
-been exposed through the later logical-cursor layer.
+Frame boundaries and padding are interpreted through `Id3v22DataCursor`.
+This is essential for whole-tag-unsynchronised input: physical stuffing zeros
+must not be mistaken for padding, and logical frame sizes may occupy larger
+physical source regions.
 
 Params:
-    region = Already bounded frames-and-padding region.
+    region = Already bounded physical frames-and-padding region.
+    tagUnsynchronised = Whether the enclosing ID3v2.2 tag declares
+        whole-tag unsynchronisation.
 
 Returns:
     The validated layout or a structured parse error.
@@ -72,23 +76,47 @@ Safety:
 +/
 ParseResult!Id3v22FrameSequenceLayout
 parseId3v22FrameSequenceLayout(
-    ByteSpan region
+    ByteSpan region,
+    bool tagUnsynchronised = false
 )
     @safe pure nothrow @nogc
 {
     auto cursor =
-        ByteCursor(region);
+        Id3v22DataCursor(
+            region,
+            tagUnsynchronised
+        );
 
     size_t frameCount =
         0;
 
     while (!cursor.empty)
     {
-        const boundary =
-            cursor.position;
+        /*
+         * Padding can only be recognized in the logical byte stream.
+         * A copied cursor lets us inspect the next logical byte without
+         * consuming the sequence parser's cursor.
+         */
+        const boundaryPhysicalPosition =
+            cursor.physicalPosition;
+
+        auto boundaryProbe =
+            cursor;
+
+        auto boundaryResult =
+            boundaryProbe.takeByte();
+
+        if (boundaryResult.hasError)
+        {
+            return
+                ParseResult!Id3v22FrameSequenceLayout
+                    .failure(
+                        boundaryResult.error
+                    );
+        }
 
         if (
-            cursor.front ==
+            boundaryResult.value.value ==
             0x00
         )
         {
@@ -107,10 +135,30 @@ parseId3v22FrameSequenceLayout(
                         );
             }
 
-            while (!cursor.empty)
+            /*
+             * Validate the complete padding region logically. Starting
+             * from the original boundary cursor also includes the first
+             * zero inspected above.
+             */
+            auto paddingCursor =
+                cursor;
+
+            while (!paddingCursor.empty)
             {
+                auto byteResult =
+                    paddingCursor.takeByte();
+
+                if (byteResult.hasError)
+                {
+                    return
+                        ParseResult!Id3v22FrameSequenceLayout
+                            .failure(
+                                byteResult.error
+                            );
+                }
+
                 if (
-                    cursor.front !=
+                    byteResult.value.value !=
                     0x00
                 )
                 {
@@ -120,25 +168,27 @@ parseId3v22FrameSequenceLayout(
                                 ParseError(
                                     ParseErrorCode
                                         .inconsistentStructure,
-                                    cursor.absoluteOffset
+                                    byteResult.value
+                                        .sourceOffset
                                 )
                             );
                 }
-
-                cursor.popFront();
             }
+
+            const paddingPhysicalLength =
+                paddingCursor.physicalPosition -
+                boundaryPhysicalPosition;
 
             const frameBytes =
                 region.subspan(
                     0,
-                    boundary
+                    boundaryPhysicalPosition
                 );
 
             const padding =
                 region.subspan(
-                    boundary,
-                    region.length -
-                        boundary
+                    boundaryPhysicalPosition,
+                    paddingPhysicalLength
                 );
 
             return
@@ -513,4 +563,210 @@ unittest
     assert(layout.frameBytes.length == 15);
     assert(layout.padding.sourceOffset == 1015);
     assert(layout.padding.length == 3);
+}
+/// Unsynchronisation stuffing inside frame data is never mistaken for padding.
+unittest
+{
+    /*
+     * Logical payload:
+     *
+     *   11 FF E1
+     *
+     * Physical payload:
+     *
+     *   11 FF 00 E1
+     *
+     * Two logical zero padding bytes follow the frame.
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x03,
+
+            0x11,
+            0xFF, 0x00,
+            0xE1,
+
+            0x00, 0x00
+        ];
+
+    const region =
+        ByteSpan(
+            bytes,
+            2000
+        );
+
+    auto result =
+        parseId3v22FrameSequenceLayout(
+            region,
+            true
+        );
+
+    assert(result.hasValue);
+
+    const layout =
+        result.value;
+
+    assert(layout.frameCount == 1);
+
+    /*
+     * Six physical header bytes plus four physical payload bytes.
+     */
+    assert(layout.frameBytes.length == 10);
+    assert(layout.frameBytes.sourceOffset == 2000);
+
+    assert(layout.padding.sourceOffset == 2010);
+    assert(layout.padding.length == 2);
+
+    assert(
+        layout.padding.data ==
+        [0x00, 0x00]
+    );
+}
+
+
+/// Stuffing at the frame/padding boundary belongs to the frame representation.
+unittest
+{
+    /*
+     * Logical sequence:
+     *
+     *   TT2 size=1
+     *   payload FF
+     *   padding 00 00
+     *
+     * Because the logical payload FF is followed by logical 00 padding,
+     * whole-tag unsynchronisation inserts one stuffing zero:
+     *
+     *   ... FF 00 00 00
+     *       ^  ^  ^  ^
+     *       |  |  padding
+     *       |  stuffing
+     *       payload
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x01,
+
+            0xFF, 0x00,
+            0x00, 0x00
+        ];
+
+    const region =
+        ByteSpan(
+            bytes,
+            3000
+        );
+
+    auto result =
+        parseId3v22FrameSequenceLayout(
+            region,
+            true
+        );
+
+    assert(result.hasValue);
+
+    const layout =
+        result.value;
+
+    assert(layout.frameCount == 1);
+
+    /*
+     * The one logical payload byte occupies two physical bytes.
+     */
+    assert(layout.frameBytes.length == 8);
+
+    assert(
+        layout.frameBytes.data ==
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x01,
+            0xFF, 0x00
+        ]
+    );
+
+    assert(layout.padding.sourceOffset == 3008);
+    assert(layout.padding.length == 2);
+}
+
+
+/// Non-zero logical data after unsynchronised padding begins is rejected.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x01,
+            0x55,
+
+            0x00,
+            0x42
+        ];
+
+    const region =
+        ByteSpan(
+            bytes,
+            4000
+        );
+
+    auto result =
+        parseId3v22FrameSequenceLayout(
+            region,
+            true
+        );
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        ParseErrorCode.inconsistentStructure
+    );
+
+    assert(result.error.offset == 4008);
+}
+
+
+/// A physical stuffing zero before a second frame does not start padding.
+unittest
+{
+    /*
+     * First frame payload is logical FF and is followed by a second frame
+     * whose first logical byte is 'T'. The payload FF therefore does not
+     * require stuffing at that boundary.
+     *
+     * The second frame payload contains FF E1 and is physically stuffed.
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x01,
+            0xFF,
+
+            'T', 'P', '1',
+            0x00, 0x00, 0x02,
+            0xFF, 0x00, 0xE1
+        ];
+
+    const region =
+        ByteSpan(
+            bytes,
+            5000
+        );
+
+    auto result =
+        parseId3v22FrameSequenceLayout(
+            region,
+            true
+        );
+
+    assert(result.hasValue);
+
+    const layout =
+        result.value;
+
+    assert(layout.frameCount == 2);
+    assert(layout.frameBytes.length == bytes.length);
+    assert(layout.padding.empty);
+    assert(layout.padding.sourceOffset == 5016);
 }
