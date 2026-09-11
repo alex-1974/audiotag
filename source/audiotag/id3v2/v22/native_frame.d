@@ -66,6 +66,10 @@ import audiotag.id3v2.v22.mpeg_location_lookup :
     Id3v22MpegLocationLookupFrame,
     decodeId3v22MpegLocationLookupFrame;
 
+import audiotag.id3v2.v22.music_cd_identifier :
+    Id3v22MusicCdIdentifierFrame,
+    decodeId3v22MusicCdIdentifierFrame;
+
 import audiotag.id3v2.v22.play_counter :
     Id3v22PlayCounterFrame,
     decodeId3v22PlayCounterFrame;
@@ -150,6 +154,7 @@ alias Id3v22NativeFrameContent =
         Id3v22LinkedInformationFrame,
         Id3v22LyricsTextFrame,
         Id3v22MpegLocationLookupFrame,
+        Id3v22MusicCdIdentifierFrame,
         Id3v22AttachedPictureFrame,
         Id3v22UniqueFileIdentifierFrame,
         Id3v22PlayCounterFrame,
@@ -231,7 +236,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `BUF`, `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `LNK`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
+- `BUF`, `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `LNK`, `MCI`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -443,6 +448,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22LinkedInformationFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "MCI"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22MusicCdIdentifierFrame(
                     tagUnsynchronised
                 )
             );
@@ -1766,4 +1788,40 @@ unittest
         );
 
     assert(isLinkedInformation);
+}
+
+/// MCI dispatches to the dedicated music-CD-identifier codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'M', 'C', 'I',
+            0x00, 0x00, 0x04,
+            0x00, 0x02, 0x01, 0x01
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1500
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isMusicCdIdentifier =
+        result.value.content.match!(
+            (Id3v22MusicCdIdentifierFrame mci) =>
+                mci.logicalTocLength == 4 &&
+                mci.rawToc.data ==
+                    [
+                        0x00, 0x02, 0x01, 0x01
+                    ],
+
+            _ =>
+                false
+        );
+
+    assert(isMusicCdIdentifier);
 }
