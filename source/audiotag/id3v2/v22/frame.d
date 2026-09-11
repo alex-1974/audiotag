@@ -7,10 +7,10 @@ number of frame-data bytes declared by that header.
 The frame data remains opaque. Text decoding, picture parsing and other
 semantic frame contents are handled by later parsing stages.
 
-This ByteCursor-based parser operates on a byte stream in which frame-header
-and frame-data lengths are directly addressable. Whole-tag ID3v2.2
-unsynchronisation requires a later logical cursor so that logical frame sizes
-can still preserve the expanded physical source representation.
+The `ByteCursor` overload operates on directly addressable bytes. The
+`Id3v22DataCursor` overload additionally supports whole-tag ID3v2.2
+unsynchronisation while preserving the expanded physical source
+representation.
 
 Parsing is atomic: malformed or truncated frames leave the caller's cursor
 unchanged.
@@ -68,9 +68,9 @@ The declared 24-bit frame size is interpreted only as a length inside the
 caller's already bounded parent region. Parsing succeeds only when the
 complete declared frame-data region is available.
 
-This overload does not perform whole-tag unsynchronisation decoding. A later
-logical-cursor overload will provide that behavior while preserving physical
-source provenance.
+This overload does not perform whole-tag unsynchronisation decoding. Use the
+`Id3v22DataCursor` overload below when the enclosing tag body is
+unsynchronised.
 
 Params:
     cursor = Cursor positioned at the first byte of a frame header.
@@ -437,4 +437,279 @@ unittest
 
     assert(cursor.position == 0);
     assert(cursor.absoluteOffset == 2000);
+}
+import audiotag.id3v2.v22.data_cursor :
+    Id3v22DataCursor;
+
+
+/++
+Parses and bounds one complete ID3v2.2 frame from a logical tag-body cursor.
+
+The six-byte frame header and the declared frame-data length are interpreted
+in the logical byte stream. The returned `data` span preserves the complete
+physical source representation, including any ID3v2.2 unsynchronisation
+stuffing bytes.
+
+Params:
+    cursor = Logical cursor positioned at the first frame-header byte.
+
+Returns:
+    The parsed frame envelope or a structured parse error.
+
+Error semantics:
+    Any failure leaves `cursor` unchanged.
++/
+ParseResult!Id3v22FrameEnvelope
+parseId3v22FrameEnvelope(
+    ref Id3v22DataCursor cursor
+)
+    @safe pure nothrow @nogc
+{
+    auto probe =
+        cursor;
+
+    auto headerResult =
+        probe.parseId3v22FrameHeader();
+
+    if (headerResult.hasError)
+    {
+        return
+            ParseResult!Id3v22FrameEnvelope
+                .failure(
+                    headerResult.error
+                );
+    }
+
+    const header =
+        headerResult.value;
+
+    auto dataResult =
+        probe.takeLogicalRegion(
+            header.size
+        );
+
+    if (dataResult.hasError)
+    {
+        return
+            ParseResult!Id3v22FrameEnvelope
+                .failure(
+                    dataResult.error
+                );
+    }
+
+    const frame =
+        Id3v22FrameEnvelope(
+            header,
+            dataResult.value
+        );
+
+    cursor =
+        probe;
+
+    return
+        ParseResult!Id3v22FrameEnvelope
+            .success(frame);
+}
+
+
+/// Logical frame envelopes are unchanged without unsynchronisation.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x03,
+
+            0x11, 0x22, 0x33,
+
+            0x55
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                3000
+            ),
+            false
+        );
+
+    auto result =
+        cursor.parseId3v22FrameEnvelope();
+
+    assert(result.hasValue);
+
+    const frame =
+        result.value;
+
+    assert(frame.header.id[] == "TT2");
+    assert(frame.header.size == 3);
+
+    assert(frame.data.sourceOffset == 3006);
+    assert(frame.data.length == 3);
+
+    assert(
+        frame.data.data ==
+        [0x11, 0x22, 0x33]
+    );
+
+    assert(frame.endOffset == 3009);
+
+    assert(cursor.logicalPosition == 9);
+    assert(cursor.physicalPosition == 9);
+    assert(cursor.absoluteOffset == 3009);
+
+    assert(
+        cursor.remainingRaw.data ==
+        [0x55]
+    );
+}
+
+
+/// Unsynchronised frame data preserves its expanded physical region.
+unittest
+{
+    /*
+     * Logical frame payload:
+     *
+     *   11 FF E1
+     *
+     * Physical frame payload:
+     *
+     *   11 FF 00 E1
+     */
+    const ubyte[] bytes =
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x03,
+
+            0x11,
+            0xFF, 0x00,
+            0xE1,
+
+            0x55
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                4000
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v22FrameEnvelope();
+
+    assert(result.hasValue);
+
+    const frame =
+        result.value;
+
+    assert(frame.header.sourceOffset == 4000);
+    assert(frame.header.id[] == "TT2");
+    assert(frame.header.size == 3);
+
+    assert(frame.data.sourceOffset == 4006);
+    assert(frame.data.length == 4);
+
+    assert(
+        frame.data.data ==
+        [
+            0x11,
+            0xFF, 0x00,
+            0xE1
+        ]
+    );
+
+    assert(frame.endOffset == 4010);
+
+    assert(cursor.logicalPosition == 9);
+    assert(cursor.physicalPosition == 10);
+    assert(cursor.absoluteOffset == 4010);
+
+    assert(
+        cursor.remainingRaw.data ==
+        [0x55]
+    );
+}
+
+
+/// Truncated logical frame data fails atomically after unsync stuffing.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 'T', '2',
+            0x00, 0x00, 0x03,
+
+            0x11,
+            0xFF, 0x00
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                6000
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v22FrameEnvelope();
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        ParseErrorCode.endOfSpan
+    );
+
+    assert(result.error.offset == 6009);
+    assert(result.error.requested == 1);
+    assert(result.error.available == 0);
+
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+    assert(cursor.absoluteOffset == 6000);
+    assert(cursor.remainingPhysical == bytes.length);
+}
+
+
+/// Logical frame-header failures also leave the envelope cursor unchanged.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'T', 't', '2',
+            0x00, 0x00, 0x01,
+            0x55
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                7000
+            ),
+            true
+        );
+
+    auto result =
+        cursor.parseId3v22FrameEnvelope();
+
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        ParseErrorCode.invalidSignature
+    );
+
+    assert(result.error.offset == 7001);
+
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+    assert(cursor.absoluteOffset == 7000);
 }
