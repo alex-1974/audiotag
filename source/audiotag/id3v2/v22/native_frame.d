@@ -27,6 +27,10 @@ import audiotag.id3v2.v22.attached_picture :
     Id3v22AttachedPictureFrame,
     decodeId3v22AttachedPictureFrame;
 
+import audiotag.id3v2.v22.audio_encryption :
+    Id3v22AudioEncryptionFrame,
+    decodeId3v22AudioEncryptionFrame;
+
 import audiotag.id3v2.v22.comment :
     Id3v22CommentFrame,
     decodeId3v22CommentFrame;
@@ -145,6 +149,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UserTextFrame,
         Id3v22UrlLinkFrame,
         Id3v22UserUrlFrame,
+        Id3v22AudioEncryptionFrame,
         Id3v22CommentFrame,
         Id3v22RecommendedBufferFrame,
         Id3v22EqualisationFrame,
@@ -236,7 +241,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `BUF`, `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `LNK`, `MCI`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
+- `BUF`, `COM`, `CRA`, `EQU`, `ETC`, `GEO`, `IPL`, `LNK`, `MCI`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -363,6 +368,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22CommentFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "CRA"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22AudioEncryptionFrame(
                     tagUnsynchronised
                 )
             );
@@ -1824,4 +1846,43 @@ unittest
         );
 
     assert(isMusicCdIdentifier);
+}
+
+/// CRA dispatches to the dedicated audio-encryption codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'C', 'R', 'A',
+            0x00, 0x00, 0x06,
+
+            'x',
+            0x00,
+            0x00, 0x01,
+            0x00, 0x02
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1550
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isAudioEncryption =
+        result.value.content.match!(
+            (Id3v22AudioEncryptionFrame encryption) =>
+                encryption.metadata.ownerIdentifier == "x" &&
+                encryption.metadata.previewStartFrames == 1 &&
+                encryption.metadata.previewLengthFrames == 2 &&
+                encryption.rawEncryptionInfo.empty,
+
+            _ =>
+                false
+        );
+
+    assert(isAudioEncryption);
 }
