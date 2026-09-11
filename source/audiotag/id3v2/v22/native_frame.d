@@ -31,6 +31,10 @@ import audiotag.id3v2.v22.comment :
 import audiotag.id3v2.v22.frame :
     Id3v22FrameEnvelope;
 
+import audiotag.id3v2.v22.involved_people :
+    Id3v22InvolvedPeopleFrame,
+    decodeId3v22InvolvedPeopleFrame;
+
 import audiotag.id3v2.v22.lyrics_text :
     Id3v22LyricsTextFrame,
     decodeId3v22LyricsTextFrame;
@@ -93,6 +97,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UrlLinkFrame,
         Id3v22UserUrlFrame,
         Id3v22CommentFrame,
+        Id3v22InvolvedPeopleFrame,
         Id3v22LyricsTextFrame,
         Id3v22AttachedPictureFrame,
         Id3v22UniqueFileIdentifierFrame,
@@ -171,7 +176,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ULT`, `PIC`, `UFI`, `CNT` and `POP` use their dedicated codecs;
+- `COM`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT` and `POP` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -281,6 +286,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22CommentFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "IPL"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22InvolvedPeopleFrame(
                     tagUnsynchronised
                 )
             );
@@ -1056,4 +1078,45 @@ unittest
         );
 
     assert(isPopularityMeter);
+}
+
+/// IPL dispatches to the dedicated involved-people codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'I', 'P', 'L',
+            0x00, 0x00, 0x0E,
+
+            0x00,
+
+            'g', 'u', 'i', 't', 'a', 'r',
+            0x00,
+
+            'A', 'l', 'i', 'c', 'e',
+            0x00
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                950
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isInvolvedPeople =
+        result.value.content.match!(
+            (Id3v22InvolvedPeopleFrame people) =>
+                people.entries.length == 1 &&
+                people.entries[0].credit.involvement == "guitar" &&
+                people.entries[0].credit.involvee == "Alice",
+
+            _ =>
+                false
+        );
+
+    assert(isInvolvedPeople);
 }
