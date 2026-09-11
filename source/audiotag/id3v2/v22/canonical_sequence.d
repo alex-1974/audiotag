@@ -270,7 +270,7 @@ unittest
             /*
              * Unknown but structurally valid frame.
              */
-            'G', 'E', 'O',
+            'Z', 'Z', 'Z',
             0x00, 0x00, 0x01,
 
             0x55,
@@ -394,7 +394,7 @@ unittest
     assert(
         projection.frames[1]
             .native.envelope.header.id[] ==
-        "GEO"
+        "ZZZ"
     );
 
 

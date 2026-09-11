@@ -453,7 +453,7 @@ unittest
 
             0x00, 0x00, 0x00, 0x07,
 
-            'G', 'E', 'O',
+            'Z', 'Z', 'Z',
             0x00, 0x00, 0x01,
 
             0x55
@@ -517,7 +517,7 @@ unittest
     assert(
         tag.projection.frames[0]
             .native.envelope.header.id[] ==
-        "GEO"
+        "ZZZ"
     );
 
 

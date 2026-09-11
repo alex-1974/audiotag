@@ -31,6 +31,10 @@ import audiotag.id3v2.v22.comment :
 import audiotag.id3v2.v22.frame :
     Id3v22FrameEnvelope;
 
+import audiotag.id3v2.v22.general_encapsulated_object :
+    Id3v22GeneralEncapsulatedObjectFrame,
+    decodeId3v22GeneralEncapsulatedObjectFrame;
+
 import audiotag.id3v2.v22.involved_people :
     Id3v22InvolvedPeopleFrame,
     decodeId3v22InvolvedPeopleFrame;
@@ -97,6 +101,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UrlLinkFrame,
         Id3v22UserUrlFrame,
         Id3v22CommentFrame,
+        Id3v22GeneralEncapsulatedObjectFrame,
         Id3v22InvolvedPeopleFrame,
         Id3v22LyricsTextFrame,
         Id3v22AttachedPictureFrame,
@@ -176,7 +181,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT` and `POP` use their dedicated codecs;
+- `COM`, `GEO`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT` and `POP` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -286,6 +291,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22CommentFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "GEO"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22GeneralEncapsulatedObjectFrame(
                     tagUnsynchronised
                 )
             );
@@ -847,7 +869,7 @@ unittest
 {
     const ubyte[] bytes =
         [
-            'G', 'E', 'O',
+            'Z', 'Z', 'Z',
             0x00, 0x00, 0x03,
 
             0x11, 0x22, 0x33
@@ -879,7 +901,7 @@ unittest
 
     assert(native.sourceOffset == 2000);
     assert(native.sourceLength == 9);
-    assert(native.envelope.header.id[] == "GEO");
+    assert(native.envelope.header.id[] == "ZZZ");
 
     assert(
         native.envelope.data.data ==
@@ -1119,4 +1141,45 @@ unittest
         );
 
     assert(isInvolvedPeople);
+}
+
+/// GEO dispatches to the dedicated general-encapsulated-object codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'G', 'E', 'O',
+            0x00, 0x00, 0x0A,
+
+            0x00,
+            'x', 0x00,
+            'f', 0x00,
+            'd', 0x00,
+            0x01, 0x02, 0x03
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1000
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isGeneralObject =
+        result.value.content.match!(
+            (Id3v22GeneralEncapsulatedObjectFrame object) =>
+                object.info.mimeType == "x" &&
+                object.info.filename == "f" &&
+                object.info.description == "d" &&
+                object.rawObjectData.data ==
+                    [0x01, 0x02, 0x03],
+
+            _ =>
+                false
+        );
+
+    assert(isGeneralObject);
 }

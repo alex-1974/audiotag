@@ -364,7 +364,7 @@ unittest
 
             0x00, 0x00, 0x00, 0x09,
 
-            'G', 'E', 'O',
+            'Z', 'Z', 'Z',
             0x00, 0x00, 0x03,
             0x11, 0x22, 0x33
         ];
@@ -407,7 +407,7 @@ unittest
     assert(
         tag.sequence.frames[0]
             .envelope.header.id[] ==
-        "GEO"
+        "ZZZ"
     );
 
     assert(
