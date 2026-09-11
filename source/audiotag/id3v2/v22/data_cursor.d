@@ -265,6 +265,62 @@ public:
 
 
     /++
+    Reads one unsigned 32-bit big-endian integer from the logical byte stream.
+
+    Four logical bytes are required. This is the integer representation used
+    by ID3v2 synchronisation timestamps.
+
+    Returns:
+        The decoded unsigned 32-bit value, or a structured parse error.
+
+    Error semantics:
+        Failure leaves this cursor unchanged.
+    +/
+    ParseResult!uint
+    takeU32BE()
+        @safe pure nothrow @nogc
+    {
+        auto probe =
+            this;
+
+        uint value =
+            0;
+
+        foreach (
+            index;
+            0 .. 4
+        )
+        {
+            auto byteResult =
+                probe.takeByte();
+
+            if (byteResult.hasError)
+            {
+                return
+                    ParseResult!uint
+                        .failure(
+                            byteResult.error
+                        );
+            }
+
+            value =
+                (
+                    value << 8
+                ) |
+                cast(uint)
+                    byteResult.value.value;
+        }
+
+        this =
+            probe;
+
+        return
+            ParseResult!uint
+                .success(value);
+    }
+
+
+    /++
     Consumes exactly `count` logical bytes and returns their complete physical
     source region.
 
@@ -745,4 +801,94 @@ unittest
     assert(cursor.physicalPosition == 0);
     assert(cursor.absoluteOffset == 900);
     assert(cursor.remainingPhysical == 1);
+}
+
+/// U32BE reads four logical bytes in network byte order.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            0x12, 0x34, 0x56, 0x78,
+            0xAA
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                1000
+            ),
+            false
+        );
+
+    auto result =
+        cursor.takeU32BE();
+
+    assert(result.hasValue);
+    assert(result.value == 0x12_34_56_78);
+    assert(cursor.logicalPosition == 4);
+    assert(cursor.physicalPosition == 4);
+    assert(cursor.absoluteOffset == 1004);
+    assert(cursor.remainingRaw.data == [0xAA]);
+}
+
+
+/// U32BE remains logical across whole-tag unsynchronisation stuffing.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            0x12,
+            0xFF, 0x00,
+            0xE1,
+            0x34,
+            0xAA
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                1100
+            ),
+            true
+        );
+
+    auto result =
+        cursor.takeU32BE();
+
+    assert(result.hasValue);
+    assert(result.value == 0x12_FF_E1_34);
+    assert(cursor.logicalPosition == 4);
+    assert(cursor.physicalPosition == 5);
+    assert(cursor.absoluteOffset == 1105);
+    assert(cursor.remainingRaw.data == [0xAA]);
+}
+
+
+/// Failed U32BE reads leave the logical cursor unchanged.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            0x12, 0x34, 0x56
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                1200
+            ),
+            false
+        );
+
+    auto result =
+        cursor.takeU32BE();
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.endOfSpan);
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+    assert(cursor.absoluteOffset == 1200);
 }
