@@ -68,6 +68,10 @@ import audiotag.id3v2.v22.relative_volume :
     Id3v22RelativeVolumeFrame,
     decodeId3v22RelativeVolumeFrame;
 
+import audiotag.id3v2.v22.reverb :
+    Id3v22ReverbFrame,
+    decodeId3v22ReverbFrame;
+
 import audiotag.id3v2.v22.synchronised_tempo :
     Id3v22SynchronisedTempoFrame,
     decodeId3v22SynchronisedTempoFrame;
@@ -138,6 +142,7 @@ alias Id3v22NativeFrameContent =
         Id3v22PlayCounterFrame,
         Id3v22PopularityMeterFrame,
         Id3v22RelativeVolumeFrame,
+        Id3v22ReverbFrame,
         Id3v22SynchronisedTempoFrame,
         Id3v22SynchronisedTextFrame,
         Id3v22UnknownFrame
@@ -213,7 +218,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `RVA`, `SLT` and `STC` use their dedicated codecs;
+- `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -493,6 +498,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22PopularityMeterFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "REV"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22ReverbFrame(
                     tagUnsynchronised
                 )
             );
@@ -1578,4 +1600,50 @@ unittest
         );
 
     assert(isEqualisation);
+}
+
+/// REV dispatches to the dedicated reverb codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'R', 'E', 'V',
+            0x00, 0x00, 0x0C,
+            0x00, 0x64,
+            0x00, 0xC8,
+            0x03,
+            0x04,
+            0x10,
+            0x20,
+            0x30,
+            0x40,
+            0x50,
+            0x60
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1350
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isReverb =
+        result.value.content.match!(
+            (Id3v22ReverbFrame reverb) =>
+                reverb.settings.leftDelayMilliseconds == 100 &&
+                reverb.settings.rightDelayMilliseconds == 200 &&
+                reverb.settings.leftBounces.finiteCount == 3 &&
+                reverb.settings.rightBounces.finiteCount == 4 &&
+                reverb.settings.feedbackLeftToLeft == 0x10 &&
+                reverb.settings.premixRightToLeft == 0x60,
+
+            _ =>
+                false
+        );
+
+    assert(isReverb);
 }
