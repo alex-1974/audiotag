@@ -221,7 +221,7 @@ private immutable MetadataFieldDefinition[] definitions =
     MetadataFieldDefinition(
         MetadataKey("commercialUrl"),
         MetadataValueKind.url,
-        MetadataMultiplicity.single
+        MetadataMultiplicity.repeated
     ),
 
     MetadataFieldDefinition(
@@ -239,7 +239,7 @@ private immutable MetadataFieldDefinition[] definitions =
     MetadataFieldDefinition(
         MetadataKey("artistUrl"),
         MetadataValueKind.url,
-        MetadataMultiplicity.single
+        MetadataMultiplicity.repeated
     ),
 
     MetadataFieldDefinition(
@@ -525,20 +525,51 @@ unittest
 }
 
 
-/// Standard URL fields are registered as URL-typed single values.
+/// Commercial and artist URLs are standard repeatable URL semantics.
 unittest
 {
-    foreach (key;
+    foreach (
+        key;
         [
             "commercialUrl",
+            "artistUrl"
+        ]
+    )
+    {
+        auto definition =
+            findMetadataFieldDefinition(
+                MetadataKey(key)
+            );
+
+        assert(definition.found);
+
+        assert(
+            definition.definition.valueKind ==
+            MetadataValueKind.url
+        );
+
+        assert(
+            definition.definition.multiplicity ==
+            MetadataMultiplicity.repeated
+        );
+    }
+}
+
+
+/// Other standard URL fields remain URL-typed single values.
+unittest
+{
+    foreach (
+        key;
+        [
             "copyrightUrl",
             "audioFileUrl",
-            "artistUrl",
             "audioSourceUrl",
             "radioStationUrl",
             "paymentUrl",
             "publisherUrl"
-        ])
+        ]
+    )
     {
         auto definition =
             findMetadataFieldDefinition(

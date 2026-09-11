@@ -261,6 +261,7 @@ version (unittest)
 
     import audiotag.metadata.value :
         MetadataText,
+        MetadataUrl,
         MetadataValue;
 
 
@@ -272,6 +273,23 @@ version (unittest)
     {
         MetadataValue wrapped =
             MetadataText(value);
+
+        return
+            MetadataField(
+                MetadataKey(key),
+                wrapped
+            );
+    }
+
+
+    private MetadataField urlField(
+        string key,
+        string value
+    )
+        @safe
+    {
+        MetadataValue wrapped =
+            MetadataUrl(value);
 
         return
             MetadataField(
@@ -482,6 +500,50 @@ unittest
         );
 
     assert(result.valid);
+}
+
+
+/// Repeatable standard URL semantics remain valid across source and edits.
+unittest
+{
+    foreach (
+        key;
+        [
+            "commercialUrl",
+            "artistUrl"
+        ]
+    )
+    {
+        auto source =
+            MetadataTree.init;
+
+        source.append(
+            urlField(
+                key,
+                "https://example.invalid/one"
+            )
+        );
+
+        auto edit =
+            MetadataTreeEdit.forSource(
+                source
+            );
+
+        edit.appendNewField(
+            urlField(
+                key,
+                "https://example.invalid/two"
+            )
+        );
+
+        const result =
+            validateMetadataTreeEditMultiplicity(
+                source,
+                edit
+            );
+
+        assert(result.valid);
+    }
 }
 
 
