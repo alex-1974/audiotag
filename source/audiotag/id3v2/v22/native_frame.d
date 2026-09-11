@@ -31,6 +31,10 @@ import audiotag.id3v2.v22.audio_encryption :
     Id3v22AudioEncryptionFrame,
     decodeId3v22AudioEncryptionFrame;
 
+import audiotag.id3v2.v22.encrypted_meta :
+    Id3v22EncryptedMetaFrame,
+    decodeId3v22EncryptedMetaFrame;
+
 import audiotag.id3v2.v22.comment :
     Id3v22CommentFrame,
     decodeId3v22CommentFrame;
@@ -150,6 +154,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UrlLinkFrame,
         Id3v22UserUrlFrame,
         Id3v22AudioEncryptionFrame,
+        Id3v22EncryptedMetaFrame,
         Id3v22CommentFrame,
         Id3v22RecommendedBufferFrame,
         Id3v22EqualisationFrame,
@@ -241,7 +246,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `BUF`, `COM`, `CRA`, `EQU`, `ETC`, `GEO`, `IPL`, `LNK`, `MCI`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
+- `BUF`, `COM`, `CRA`, `CRM`, `EQU`, `ETC`, `GEO`, `IPL`, `LNK`, `MCI`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -385,6 +390,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22AudioEncryptionFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "CRM"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22EncryptedMetaFrame(
                     tagUnsynchronised
                 )
             );
@@ -1885,4 +1907,46 @@ unittest
         );
 
     assert(isAudioEncryption);
+}
+
+/// CRM dispatches to the dedicated encrypted-meta codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'C', 'R', 'M',
+            0x00, 0x00, 0x05,
+
+            'x',
+            0x00,
+            0x00,
+            0xAA, 0xBB
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1600
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isEncryptedMeta =
+        result.value.content.match!(
+            (Id3v22EncryptedMetaFrame encrypted) =>
+                encrypted.ownerIdentifier == "x" &&
+                encrypted.contentExplanation.length == 0 &&
+                encrypted.logicalEncryptedDataLength == 2 &&
+                encrypted.rawEncryptedData.data ==
+                    [
+                        0xAA, 0xBB
+                    ],
+
+            _ =>
+                false
+        );
+
+    assert(isEncryptedMeta);
 }
