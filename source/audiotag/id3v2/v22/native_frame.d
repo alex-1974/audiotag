@@ -59,6 +59,11 @@ import audiotag.id3v2.v22.synchronised_tempo :
     Id3v22SynchronisedTempoFrame,
     decodeId3v22SynchronisedTempoFrame;
 
+import audiotag.id3v2.v22.synchronised_text :
+    Id3v22SynchronisedTextContentType,
+    Id3v22SynchronisedTextFrame,
+    decodeId3v22SynchronisedTextFrame;
+
 import audiotag.id3v2.v22.text_information :
     Id3v22TextInformationFrame,
     decodeId3v22TextInformationFrame;
@@ -118,6 +123,7 @@ alias Id3v22NativeFrameContent =
         Id3v22PlayCounterFrame,
         Id3v22PopularityMeterFrame,
         Id3v22SynchronisedTempoFrame,
+        Id3v22SynchronisedTextFrame,
         Id3v22UnknownFrame
     );
 
@@ -191,7 +197,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ETC`, `GEO`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP` and `STC` use their dedicated codecs;
+- `COM`, `ETC`, `GEO`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -437,6 +443,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22PopularityMeterFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "SLT"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22SynchronisedTextFrame(
                     tagUnsynchronised
                 )
             );
@@ -1311,4 +1334,52 @@ unittest
         );
 
     assert(isSynchronisedTempo);
+}
+
+/// SLT dispatches to the dedicated synchronised-text codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'S', 'L', 'T',
+            0x00, 0x00, 0x0E,
+
+            0x00,
+            'e', 'n', 'g',
+            0x02,
+            0x01,
+            0x00,
+
+            'H', 'i',
+            0x00,
+            0x00, 0x00, 0x00, 0x2A
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1150
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isSynchronisedText =
+        result.value.content.match!(
+            (Id3v22SynchronisedTextFrame text) =>
+                text.language[] == "eng" &&
+                text.timestampFormat ==
+                    Id3v2TimestampFormat.milliseconds &&
+                text.contentType ==
+                    Id3v22SynchronisedTextContentType.lyrics &&
+                text.cues.length == 1 &&
+                text.cues[0].cue.text == "Hi" &&
+                text.cues[0].cue.timestamp == 42,
+
+            _ =>
+                false
+        );
+
+    assert(isSynchronisedText);
 }
