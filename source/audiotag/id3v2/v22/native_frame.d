@@ -39,6 +39,10 @@ import audiotag.id3v2.v22.play_counter :
     Id3v22PlayCounterFrame,
     decodeId3v22PlayCounterFrame;
 
+import audiotag.id3v2.v22.popularity_meter :
+    Id3v22PopularityMeterFrame,
+    decodeId3v22PopularityMeterFrame;
+
 import audiotag.id3v2.v22.text_information :
     Id3v22TextInformationFrame,
     decodeId3v22TextInformationFrame;
@@ -93,6 +97,7 @@ alias Id3v22NativeFrameContent =
         Id3v22AttachedPictureFrame,
         Id3v22UniqueFileIdentifierFrame,
         Id3v22PlayCounterFrame,
+        Id3v22PopularityMeterFrame,
         Id3v22UnknownFrame
     );
 
@@ -166,7 +171,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ULT`, `PIC`, `UFI` and `CNT` use their dedicated codecs;
+- `COM`, `ULT`, `PIC`, `UFI`, `CNT` and `POP` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -344,6 +349,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22PlayCounterFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "POP"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22PopularityMeterFrame(
                     tagUnsynchronised
                 )
             );
@@ -991,4 +1013,47 @@ unittest
         );
 
     assert(isPlayCounter);
+}
+
+
+/// POP dispatches to the dedicated popularity-meter codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'P', 'O', 'P',
+            0x00, 0x00, 0x09,
+
+            'a', '@', 'b',
+            0x00,
+            0xC8,
+            0x00, 0x00, 0x00, 0x2A
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                900
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isPopularityMeter =
+        result.value.content.match!(
+            (Id3v22PopularityMeterFrame meter) =>
+                meter.popularity.email == "a@b" &&
+                meter.popularity.rating == 0xC8 &&
+                meter.popularity.hasCounter &&
+                meter.popularity.counter.bigEndianBytes ==
+                    [
+                        0x00, 0x00, 0x00, 0x2A
+                    ],
+
+            _ =>
+                false
+        );
+
+    assert(isPopularityMeter);
 }
