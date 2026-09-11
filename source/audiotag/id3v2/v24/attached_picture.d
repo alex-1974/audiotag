@@ -29,6 +29,11 @@ import audiotag.core.result :
 import audiotag.core.span :
     ByteSpan;
 
+import audiotag.id3v2.common.picture :
+    Id3v2PicturePayloadKind,
+    Id3v2PictureType,
+    isValidId3v2PictureType;
+
 import audiotag.id3v2.v24.frame :
     Id3v24FrameEnvelope;
 
@@ -47,45 +52,17 @@ import audiotag.id3v2.v24.text_segment :
 
 
 /++
-ID3v2.4 attached-picture type.
+Backward-compatible ID3v2.4 name for the shared ID3v2 picture type.
 +/
-enum Id3v24PictureType : ubyte
-{
-    other = 0x00,
-    fileIcon = 0x01,
-    otherFileIcon = 0x02,
-    frontCover = 0x03,
-    backCover = 0x04,
-    leafletPage = 0x05,
-    media = 0x06,
-    leadArtist = 0x07,
-    artist = 0x08,
-    conductor = 0x09,
-    band = 0x0A,
-    composer = 0x0B,
-    lyricist = 0x0C,
-    recordingLocation = 0x0D,
-    duringRecording = 0x0E,
-    duringPerformance = 0x0F,
-    videoCapture = 0x10,
-    brightColouredFish = 0x11,
-    illustration = 0x12,
-    artistLogotype = 0x13,
-    publisherLogotype = 0x14
-}
+alias Id3v24PictureType =
+    Id3v2PictureType;
 
 
 /++
-Kind of payload carried after the APIC description.
+Backward-compatible ID3v2.4 name for the shared picture payload kind.
 +/
-enum Id3v24PicturePayloadKind : ubyte
-{
-    /// Embedded binary image data.
-    binaryData,
-
-    /// MIME type `"-->"` indicates a linked image URL.
-    linkedUrl
-}
+alias Id3v24PicturePayloadKind =
+    Id3v2PicturePayloadKind;
 
 
 /++
@@ -322,7 +299,11 @@ decodeId3v24AttachedPictureFrame(
     const typeByte =
         typeResult.value;
 
-    if (typeByte.value > 0x14)
+    if (
+        !isValidId3v2PictureType(
+            typeByte.value
+        )
+    )
     {
         return ParseResult!Id3v24AttachedPictureOutcome.failure(
             ParseError(
