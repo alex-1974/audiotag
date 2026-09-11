@@ -59,6 +59,11 @@ import audiotag.id3v2.v22.popularity_meter :
     Id3v22PopularityMeterFrame,
     decodeId3v22PopularityMeterFrame;
 
+import audiotag.id3v2.v22.relative_volume :
+    Id3v22RelativeVolumeChannel,
+    Id3v22RelativeVolumeFrame,
+    decodeId3v22RelativeVolumeFrame;
+
 import audiotag.id3v2.v22.synchronised_tempo :
     Id3v22SynchronisedTempoFrame,
     decodeId3v22SynchronisedTempoFrame;
@@ -127,6 +132,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UniqueFileIdentifierFrame,
         Id3v22PlayCounterFrame,
         Id3v22PopularityMeterFrame,
+        Id3v22RelativeVolumeFrame,
         Id3v22SynchronisedTempoFrame,
         Id3v22SynchronisedTextFrame,
         Id3v22UnknownFrame
@@ -202,7 +208,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `SLT` and `STC` use their dedicated codecs;
+- `COM`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -465,6 +471,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22PopularityMeterFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "RVA"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22RelativeVolumeFrame(
                     tagUnsynchronised
                 )
             );
@@ -1449,4 +1472,49 @@ unittest
         );
 
     assert(isMpegLocationLookup);
+}
+
+/// RVA dispatches to the dedicated relative-volume codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'R', 'V', 'A',
+            0x00, 0x00, 0x04,
+
+            0x03,
+            0x08,
+            0x10,
+            0x20
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1250
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isRelativeVolume =
+        result.value.content.match!(
+            (Id3v22RelativeVolumeFrame volume) =>
+                volume.bitsUsed == 8 &&
+                volume.channels.length == 2 &&
+                volume.channels[0].channel ==
+                    Id3v22RelativeVolumeChannel.right &&
+                volume.channels[0].adjustment.increment &&
+                volume.channels[0].adjustment.changeMagnitude == 16 &&
+                volume.channels[1].channel ==
+                    Id3v22RelativeVolumeChannel.left &&
+                volume.channels[1].adjustment.increment &&
+                volume.channels[1].adjustment.changeMagnitude == 32,
+
+            _ =>
+                false
+        );
+
+    assert(isRelativeVolume);
 }
