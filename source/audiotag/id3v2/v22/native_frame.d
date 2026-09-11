@@ -28,6 +28,10 @@ import audiotag.id3v2.v22.comment :
     Id3v22CommentFrame,
     decodeId3v22CommentFrame;
 
+import audiotag.id3v2.v22.equalisation :
+    Id3v22EqualisationFrame,
+    decodeId3v22EqualisationFrame;
+
 import audiotag.id3v2.v22.event_timing :
     Id3v22EventTimingFrame,
     decodeId3v22EventTimingFrame;
@@ -123,6 +127,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UrlLinkFrame,
         Id3v22UserUrlFrame,
         Id3v22CommentFrame,
+        Id3v22EqualisationFrame,
         Id3v22EventTimingFrame,
         Id3v22GeneralEncapsulatedObjectFrame,
         Id3v22InvolvedPeopleFrame,
@@ -208,7 +213,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `RVA`, `SLT` and `STC` use their dedicated codecs;
+- `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -318,6 +323,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22CommentFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "EQU"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22EqualisationFrame(
                     tagUnsynchronised
                 )
             );
@@ -1517,4 +1539,43 @@ unittest
         );
 
     assert(isRelativeVolume);
+}
+
+/// EQU dispatches to the dedicated legacy equalisation codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'E', 'Q', 'U',
+            0x00, 0x00, 0x04,
+
+            0x08,
+            0x83, 0xE8,
+            0x20
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1300
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isEqualisation =
+        result.value.content.match!(
+            (Id3v22EqualisationFrame equalisation) =>
+                equalisation.adjustmentBits == 8 &&
+                equalisation.bands.length == 1 &&
+                equalisation.bands[0].band.increment &&
+                equalisation.bands[0].band.frequencyHz == 1000 &&
+                equalisation.bands[0].band.adjustmentMagnitude == 32,
+
+            _ =>
+                false
+        );
+
+    assert(isEqualisation);
 }
