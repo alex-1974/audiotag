@@ -55,6 +55,10 @@ import audiotag.id3v2.v22.popularity_meter :
     Id3v22PopularityMeterFrame,
     decodeId3v22PopularityMeterFrame;
 
+import audiotag.id3v2.v22.synchronised_tempo :
+    Id3v22SynchronisedTempoFrame,
+    decodeId3v22SynchronisedTempoFrame;
+
 import audiotag.id3v2.v22.text_information :
     Id3v22TextInformationFrame,
     decodeId3v22TextInformationFrame;
@@ -113,6 +117,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UniqueFileIdentifierFrame,
         Id3v22PlayCounterFrame,
         Id3v22PopularityMeterFrame,
+        Id3v22SynchronisedTempoFrame,
         Id3v22UnknownFrame
     );
 
@@ -186,7 +191,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ETC`, `GEO`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT` and `POP` use their dedicated codecs;
+- `COM`, `ETC`, `GEO`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -438,6 +443,23 @@ decodeId3v22NativeFrame(
     }
 
 
+    if (
+        idEquals(
+            frame.header.id,
+            "STC"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22SynchronisedTempoFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
     /*
      * Unknown semantic content is not malformed. The complete structural
      * envelope remains attached to this native node.
@@ -516,6 +538,9 @@ version (unittest)
 {
     import audiotag.core.cursor :
         ByteCursor;
+
+    import audiotag.id3v2.common.tempo :
+        Id3v2TempoKind;
 
     import audiotag.id3v2.common.timestamp :
         Id3v2TimestampFormat;
@@ -1246,4 +1271,44 @@ unittest
         );
 
     assert(isEventTiming);
+}
+
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'S', 'T', 'C',
+            0x00, 0x00, 0x06,
+
+            0x02,
+            120,
+            0x00, 0x00, 0x00, 0x2A
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1100
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isSynchronisedTempo =
+        result.value.content.match!(
+            (Id3v22SynchronisedTempoFrame timing) =>
+                timing.timestampFormat ==
+                    Id3v2TimestampFormat.milliseconds &&
+                timing.entries.length == 1 &&
+                timing.entries[0].tempo.kind ==
+                    Id3v2TempoKind.beatsPerMinute &&
+                timing.entries[0].tempo.beatsPerMinute == 120 &&
+                timing.entries[0].timestamp == 42,
+
+            _ =>
+                false
+        );
+
+    assert(isSynchronisedTempo);
 }
