@@ -35,6 +35,10 @@ import audiotag.id3v2.v22.lyrics_text :
     Id3v22LyricsTextFrame,
     decodeId3v22LyricsTextFrame;
 
+import audiotag.id3v2.v22.play_counter :
+    Id3v22PlayCounterFrame,
+    decodeId3v22PlayCounterFrame;
+
 import audiotag.id3v2.v22.text_information :
     Id3v22TextInformationFrame,
     decodeId3v22TextInformationFrame;
@@ -88,6 +92,7 @@ alias Id3v22NativeFrameContent =
         Id3v22LyricsTextFrame,
         Id3v22AttachedPictureFrame,
         Id3v22UniqueFileIdentifierFrame,
+        Id3v22PlayCounterFrame,
         Id3v22UnknownFrame
     );
 
@@ -161,7 +166,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ULT`, `PIC` and `UFI` use their dedicated codecs;
+- `COM`, `ULT`, `PIC`, `UFI` and `CNT` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -322,6 +327,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22UniqueFileIdentifierFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "CNT"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22PlayCounterFrame(
                     tagUnsynchronised
                 )
             );
@@ -932,4 +954,41 @@ unittest
         );
 
     assert(preserved);
+}
+
+
+/// CNT dispatches to the dedicated arbitrary-width play-counter codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'C', 'N', 'T',
+            0x00, 0x00, 0x04,
+
+            0x00, 0x00, 0x00, 0x2A
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                850
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isPlayCounter =
+        result.value.content.match!(
+            (Id3v22PlayCounterFrame counter) =>
+                counter.counter.bigEndianBytes ==
+                    [
+                        0x00, 0x00, 0x00, 0x2A
+                    ],
+
+            _ =>
+                false
+        );
+
+    assert(isPlayCounter);
 }
