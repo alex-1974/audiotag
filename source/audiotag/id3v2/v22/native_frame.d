@@ -20,6 +20,9 @@ import std.sumtype :
 import audiotag.core.result :
     ParseResult;
 
+import audiotag.id3v2.common.linked_information :
+    Id3v2LinkedAdditionalIdKind;
+
 import audiotag.id3v2.v22.attached_picture :
     Id3v22AttachedPictureFrame,
     decodeId3v22AttachedPictureFrame;
@@ -50,6 +53,10 @@ import audiotag.id3v2.v22.general_encapsulated_object :
 import audiotag.id3v2.v22.involved_people :
     Id3v22InvolvedPeopleFrame,
     decodeId3v22InvolvedPeopleFrame;
+
+import audiotag.id3v2.v22.linked_information :
+    Id3v22LinkedInformationFrame,
+    decodeId3v22LinkedInformationFrame;
 
 import audiotag.id3v2.v22.lyrics_text :
     Id3v22LyricsTextFrame,
@@ -140,6 +147,7 @@ alias Id3v22NativeFrameContent =
         Id3v22EventTimingFrame,
         Id3v22GeneralEncapsulatedObjectFrame,
         Id3v22InvolvedPeopleFrame,
+        Id3v22LinkedInformationFrame,
         Id3v22LyricsTextFrame,
         Id3v22MpegLocationLookupFrame,
         Id3v22AttachedPictureFrame,
@@ -223,7 +231,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `BUF`, `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
+- `BUF`, `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `LNK`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -418,6 +426,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22InvolvedPeopleFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "LNK"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22LinkedInformationFrame(
                     tagUnsynchronised
                 )
             );
@@ -1704,4 +1729,41 @@ unittest
         );
 
     assert(isRecommendedBuffer);
+}
+
+/// LNK dispatches to the dedicated linked-information codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'L', 'N', 'K',
+            0x00, 0x00, 0x05,
+            'R', 'E', 'V',
+            'x',
+            0x00
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1450
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isLinkedInformation =
+        result.value.content.match!(
+            (Id3v22LinkedInformationFrame link) =>
+                link.linkedFrameId[] == "REV" &&
+                link.linked.url == "x" &&
+                link.linked.additionalKind ==
+                    Id3v2LinkedAdditionalIdKind.none,
+
+            _ =>
+                false
+        );
+
+    assert(isLinkedInformation);
 }
