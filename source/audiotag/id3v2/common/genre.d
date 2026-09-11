@@ -62,6 +62,29 @@ struct Id3v2GenreDecodeResult
 
 
 /++
+Decodes one ID3v2.2 `TCO` information string.
+
+ID3v2.2 and ID3v2.3 define the same legacy content-type grammar: parenthesized
+ID3v1 numeric references, multiple references, `RX`/`CR`, optional free-text
+refinement, and doubled-opening-parenthesis escaping.
+
+The shared implementation therefore delegates to the same semantic decoder
+rather than maintaining a revision-specific copy.
++/
+Id3v2GenreDecodeResult
+decodeId3v22Genre(
+    string value
+)
+    @safe
+{
+    return
+        decodeId3v23Genre(
+            value
+        );
+}
+
+
+/++
 Decodes one ID3v2.3 `TCON` information string.
 
 Recognized forms include:
