@@ -28,6 +28,10 @@ import audiotag.id3v2.v22.comment :
     Id3v22CommentFrame,
     decodeId3v22CommentFrame;
 
+import audiotag.id3v2.v22.recommended_buffer :
+    Id3v22RecommendedBufferFrame,
+    decodeId3v22RecommendedBufferFrame;
+
 import audiotag.id3v2.v22.equalisation :
     Id3v22EqualisationFrame,
     decodeId3v22EqualisationFrame;
@@ -131,6 +135,7 @@ alias Id3v22NativeFrameContent =
         Id3v22UrlLinkFrame,
         Id3v22UserUrlFrame,
         Id3v22CommentFrame,
+        Id3v22RecommendedBufferFrame,
         Id3v22EqualisationFrame,
         Id3v22EventTimingFrame,
         Id3v22GeneralEncapsulatedObjectFrame,
@@ -218,7 +223,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
+- `BUF`, `COM`, `EQU`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `REV`, `RVA`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -311,6 +316,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22UrlLinkFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "BUF"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22RecommendedBufferFrame(
                     tagUnsynchronised
                 )
             );
@@ -1646,4 +1668,40 @@ unittest
         );
 
     assert(isReverb);
+}
+
+/// BUF dispatches to the dedicated recommended-buffer codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'B', 'U', 'F',
+            0x00, 0x00, 0x04,
+
+            0x00, 0x10, 0x00,
+            0x01
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1400
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isRecommendedBuffer =
+        result.value.content.match!(
+            (Id3v22RecommendedBufferFrame buffer) =>
+                buffer.value.bufferSize == 4096 &&
+                buffer.value.embeddedInfo &&
+                !buffer.value.hasNextTagOffset,
+
+            _ =>
+                false
+        );
+
+    assert(isRecommendedBuffer);
 }
