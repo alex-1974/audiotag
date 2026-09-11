@@ -47,6 +47,10 @@ import audiotag.id3v2.v22.lyrics_text :
     Id3v22LyricsTextFrame,
     decodeId3v22LyricsTextFrame;
 
+import audiotag.id3v2.v22.mpeg_location_lookup :
+    Id3v22MpegLocationLookupFrame,
+    decodeId3v22MpegLocationLookupFrame;
+
 import audiotag.id3v2.v22.play_counter :
     Id3v22PlayCounterFrame,
     decodeId3v22PlayCounterFrame;
@@ -118,6 +122,7 @@ alias Id3v22NativeFrameContent =
         Id3v22GeneralEncapsulatedObjectFrame,
         Id3v22InvolvedPeopleFrame,
         Id3v22LyricsTextFrame,
+        Id3v22MpegLocationLookupFrame,
         Id3v22AttachedPictureFrame,
         Id3v22UniqueFileIdentifierFrame,
         Id3v22PlayCounterFrame,
@@ -197,7 +202,7 @@ Routing rules:
 - other `T**` frames use the ordinary text-information codec;
 - `WXX` uses the user-defined URL codec;
 - other `W**` frames use the ordinary URL-link codec;
-- `COM`, `ETC`, `GEO`, `IPL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `SLT` and `STC` use their dedicated codecs;
+- `COM`, `ETC`, `GEO`, `IPL`, `MLL`, `ULT`, `PIC`, `UFI`, `CNT`, `POP`, `SLT` and `STC` use their dedicated codecs;
 - all other structurally valid frame identifiers remain unknown.
 
 The specific `TXX` and `WXX` checks must precede the generic family checks.
@@ -358,6 +363,23 @@ decodeId3v22NativeFrame(
             wrapDecoded(
                 frame,
                 frame.decodeId3v22InvolvedPeopleFrame(
+                    tagUnsynchronised
+                )
+            );
+    }
+
+
+    if (
+        idEquals(
+            frame.header.id,
+            "MLL"
+        )
+    )
+    {
+        return
+            wrapDecoded(
+                frame,
+                frame.decodeId3v22MpegLocationLookupFrame(
                     tagUnsynchronised
                 )
             );
@@ -1382,4 +1404,49 @@ unittest
         );
 
     assert(isSynchronisedText);
+}
+
+/// MLL dispatches to the dedicated MPEG-location codec.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'M', 'L', 'L',
+            0x00, 0x00, 0x0B,
+
+            0x00, 0x02,
+            0x00, 0x03, 0xE8,
+            0x00, 0x00, 0x1A,
+            0x04,
+            0x04,
+
+            0xAB
+        ];
+
+    auto result =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                bytes,
+                1200
+            )
+        );
+
+    assert(result.hasValue);
+
+    const isMpegLocationLookup =
+        result.value.content.match!(
+            (Id3v22MpegLocationLookupFrame lookup) =>
+                lookup.parameters.mpegFramesBetweenReference == 2 &&
+                lookup.parameters.bytesBetweenReference == 1000 &&
+                lookup.references.length == 1 &&
+                lookup.references[0]
+                    .reference.bytesDeviation == 10 &&
+                lookup.references[0]
+                    .reference.millisecondsDeviation == 11,
+
+            _ =>
+                false
+        );
+
+    assert(isMpegLocationLookup);
 }

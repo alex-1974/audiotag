@@ -206,6 +206,62 @@ public:
 
 
     /++
+    Reads one unsigned 16-bit big-endian integer from the logical byte stream.
+
+    Two logical bytes are required.
+
+    Error semantics:
+        Failure leaves this cursor unchanged.
+    +/
+    ParseResult!ushort
+    takeU16BE()
+        @safe pure nothrow @nogc
+    {
+        auto probe =
+            this;
+
+        ushort value =
+            0;
+
+        foreach (
+            index;
+            0 .. 2
+        )
+        {
+            auto byteResult =
+                probe.takeByte();
+
+            if (byteResult.hasError)
+            {
+                return
+                    ParseResult!ushort
+                        .failure(
+                            byteResult.error
+                        );
+            }
+
+            value =
+                cast(ushort)
+                    (
+                        (
+                            cast(uint) value <<
+                            8
+                        ) |
+                        cast(uint)
+                            byteResult.value.value
+                    );
+        }
+
+        this =
+            probe;
+
+        return
+            ParseResult!ushort
+                .success(value);
+    }
+
+
+    /++
     Reads one unsigned 24-bit big-endian integer from the logical byte stream.
 
     Three logical bytes are required. This is the integer representation used
@@ -891,4 +947,92 @@ unittest
     assert(cursor.logicalPosition == 0);
     assert(cursor.physicalPosition == 0);
     assert(cursor.absoluteOffset == 1200);
+}
+
+/// U16BE reads two logical bytes in network byte order.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            0x12, 0x34,
+            0xAA
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                1300
+            ),
+            false
+        );
+
+    auto result =
+        cursor.takeU16BE();
+
+    assert(result.hasValue);
+    assert(result.value == 0x12_34);
+    assert(cursor.logicalPosition == 2);
+    assert(cursor.physicalPosition == 2);
+    assert(cursor.absoluteOffset == 1302);
+    assert(cursor.remainingRaw.data == [0xAA]);
+}
+
+
+/// U16BE remains logical across whole-tag unsynchronisation stuffing.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            0xFF, 0x00,
+            0xE1,
+            0xAA
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                1400
+            ),
+            true
+        );
+
+    auto result =
+        cursor.takeU16BE();
+
+    assert(result.hasValue);
+    assert(result.value == 0xFF_E1);
+    assert(cursor.logicalPosition == 2);
+    assert(cursor.physicalPosition == 3);
+    assert(cursor.absoluteOffset == 1403);
+    assert(cursor.remainingRaw.data == [0xAA]);
+}
+
+
+/// Failed U16BE reads leave the logical cursor unchanged.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            0x12
+        ];
+
+    auto cursor =
+        Id3v22DataCursor(
+            ByteSpan(
+                bytes,
+                1500
+            ),
+            false
+        );
+
+    auto result =
+        cursor.takeU16BE();
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.endOfSpan);
+    assert(cursor.logicalPosition == 0);
+    assert(cursor.physicalPosition == 0);
+    assert(cursor.absoluteOffset == 1500);
 }
