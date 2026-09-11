@@ -235,9 +235,9 @@ coordination remain part of the later full MPEG Audio format module.
 
 ## Phase 6 — ID3 version family
 
-Status: in progress. The ID3v2.3 parser/writer milestone and the
-ID3v1 codec plus MP3 trailing-tag update milestone are complete for the
-currently targeted canonical scope.
+Status: in progress. The ID3v2.3 parser/writer milestone, the
+ID3v2.2 read milestone, and the ID3v1 codec plus MP3 trailing-tag update
+milestone are complete for the currently targeted canonical scope.
 
 Implemented for ID3v2.3:
 
@@ -257,6 +257,36 @@ Implemented for ID3v2.3:
 - CRC regeneration after logical frame changes;
 - parse → write → parse coverage for ordinary, unsynchronised and
   CRC-bearing tags.
+
+Implemented for ID3v2.2:
+
+- strict bounded tag parsing with three-character frame identifiers and
+  24-bit big-endian frame sizes;
+- provenance-preserving logical traversal of whole-tag
+  unsynchronisation;
+- valid whole-tag compression retained exactly as opaque native data
+  without guessing a compression representation;
+- native semantic decoding for all `T**` and `W**` frame families plus
+  `COM`, `ULT`, `PIC` and `UFI`;
+- provenance-preserving unknown-frame retention for every other
+  structurally valid frame;
+- canonical mappings for title, artist, album, track/disc, genre,
+  user-defined text, standard/user URLs, comments, lyrics, artwork and
+  unique file identifiers;
+- compound `TYE`/`TDA`/`TIM` projection to precision-preserving canonical
+  `recordingDate`;
+- complete structure -> native -> canonical whole-tag read path,
+  including explicit canonical-projection availability for opaque
+  compressed tags.
+
+The current ID3v2.2 milestone is read-only. The following standard frame
+identifiers are structurally preserved but still native-semantic-codec
+pending:
+
+```text
+BUF CNT CRA CRM ETC EQU GEO IPL
+LNK MCI MLL POP REV RVA SLT STC
+```
 
 Implemented for the wider ID3 family:
 
@@ -281,11 +311,14 @@ Implemented for the wider ID3 family:
 
 Still pending in the ID3 version family:
 
+- broader ID3v2.2 native semantic coverage for `BUF`, `CNT`, `CRA`,
+  `CRM`, `ETC`, `EQU`, `GEO`, `IPL`, `LNK`, `MCI`, `MLL`, `POP`, `REV`,
+  `RVA`, `SLT` and `STC`;
+- ID3v2.2 serialization and canonical writeback;
 - broader ID3v2.3 canonical coverage as further native frame codecs are
   added;
 - compression and encryption transformation support;
 - explicit native insertion-point control for newly introduced frames;
-- ID3v2.2 frame IDs/framing;
 - broader cross-version canonical mapping where semantics differ;
 - version conversion through the canonical model.
 
