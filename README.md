@@ -45,6 +45,15 @@ The active implementation now includes:
 - native/provenance-aware ID3v2.4 semantic frame decoding;
 - strict bounded ID3v2.3 tag, extended-header, frame and padding parsing;
 - provenance-preserving ID3v2.3 whole-tag unsynchronisation traversal;
+- strict bounded ID3v2.2.0 read-only parsing with provenance-preserving
+  whole-tag unsynchronisation and opaque retention of whole-tag-compressed
+  bodies;
+- native semantic decoding for all 63 official ID3v2.2 frame identifiers,
+  with structurally valid unknown/experimental frames preserved natively;
+- tag-wide ID3v2.2 conformance diagnostics for duplicate/singleton and
+  identity-key rules, picture cardinality, MCI/TRK dependency and locally
+  decidable LNK constraints;
+- a curated public read-only `audiotag.id3v2.v22` package API;
 - an order-preserving canonical metadata tree and edit overlay;
 - deterministic canonical-to-ID3v2.4 and canonical-to-ID3v2.3 planning;
 - complete ID3v2.4 and ID3v2.3 tag serialization for the currently
@@ -96,6 +105,7 @@ container / structural parser
 tag / metadata codec
     ↓
 native/provenance-aware representation
+    ├──→ tag/revision conformance validation
     ↓
 canonical metadata tree
     ↓
@@ -178,6 +188,7 @@ Real commercial music files under the local `music/` directory are intentionally
 │       ├── id3v1/
 │       ├── id3v2/
 │       │   ├── common/
+│       │   ├── v22/
 │       │   ├── v23/
 │       │   └── v24/
 │       ├── io/

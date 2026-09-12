@@ -29,6 +29,7 @@ structural/container parser
 metadata/tag codec
        ↓
 native/provenance-aware nodes
+       ├──→ tag/revision conformance validation
        ↓
 canonical metadata tree
        ↓
@@ -287,6 +288,43 @@ Unknown data is different from corrupt data.
 Unknown but structurally valid fields should normally be preserved.
 
 Corrupt regions should be representable as raw/provenance nodes when safe.
+
+### 8.1 Tag/revision conformance validation
+
+Successful structural parsing and native semantic decoding do not by
+themselves prove that a complete tag conforms to every cross-frame rule of its
+revision.
+
+Tag/revision conformance therefore forms a diagnostic layer beside the native
+representation and before callers interpret canonical semantics. It may check
+rules such as:
+
+```text
+singleton/cardinality restrictions
+duplicate identity keys
+cross-frame dependencies
+constraints involving linked/indirect metadata
+```
+
+A conformance failure must not discard an otherwise safely decoded native
+frame. The native representation remains the source of truth for preservation
+and later policy decisions.
+
+Conformance diagnostics are distinct from low-level `ParseError` values:
+malformed byte structure may make parsing fail, while a parseable tag may
+remain available with semantic conformance violations.
+
+Some rules cannot be proven from local bytes alone. Such cases should be
+reported explicitly as unavailable or indeterminate rather than guessed.
+ID3v2.2 linked-frame constraints are the first implemented example.
+
+Opaque or otherwise undecoded native content must never be reported as
+conformant merely because no violation could be inspected. Validation
+availability must be represented explicitly.
+
+Canonical projection is downstream of native decoding and does not replace
+conformance validation. A frame may be valid native metadata yet intentionally
+lack a canonical mapping.
 
 ## 9. Canonical tree requirements
 

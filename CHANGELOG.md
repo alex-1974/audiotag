@@ -8,6 +8,21 @@ The project intends to follow Semantic Versioning once release versions begin.
 
 ### Added
 
+- Strict bounded ID3v2.2.0 read path with three-character frame identifiers,
+  24-bit big-endian frame sizes, transactional cursor behavior and
+  provenance-preserving whole-tag unsynchronisation.
+- Native semantic decoding for all 63 official ID3v2.2 frame identifiers,
+  while preserving structurally valid unknown/experimental frames.
+- Tag-wide ID3v2.2 conformance validation for singleton/duplicate rules,
+  identity-key uniqueness, PIC cardinality, MCI/TRK dependency and locally
+  decidable LNK constraints, with explicit indeterminate outcomes where local
+  bytes cannot prove a linked constraint.
+- Provenance-preserving ID3v2.2 canonical projection for the supported common
+  semantic scope, including compound `TYE`/`TDA`/`TIM` `recordingDate`
+  aggregation.
+- Opaque preservation of valid whole-tag-compressed ID3v2.2 bodies with
+  canonical projection and tag-conformance validation explicitly unavailable.
+- Curated public read-only `audiotag.id3v2.v22` package API.
 - Initial read-only `audiotag.mp3` prefix API for locating and bounding prepended ID3v2.3 and ID3v2.4 tags.
 - I/O-free planning for insertion, replacement or removal of a prepended ID3v2 tag while preserving the remaining source bytes unchanged.
 - I/O-free materialization of a leading-ID3v2 write plan into a new owned byte buffer with checked output-length arithmetic.

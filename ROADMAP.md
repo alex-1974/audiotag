@@ -260,33 +260,40 @@ Implemented for ID3v2.3:
 
 Implemented for ID3v2.2:
 
+- explicit support policy for ID3v2.2.0; later v2.2 revisions are rejected
+  as unsupported rather than guessed from the v2.2.0 grammar;
 - strict bounded tag parsing with three-character frame identifiers and
   24-bit big-endian frame sizes;
 - provenance-preserving logical traversal of whole-tag
   unsynchronisation;
 - valid whole-tag compression retained exactly as opaque native data
   without guessing a compression representation;
-- native semantic decoding for all `T**` and `W**` frame families plus
-  `COM`, `ULT`, `PIC` and `UFI`;
-- provenance-preserving unknown-frame retention for every other
-  structurally valid frame;
-- canonical mappings for title, artist, album, track/disc, genre,
-  user-defined text, standard/user URLs, comments, lyrics, artwork and
-  unique file identifiers;
+- native semantic decoding for all 63 official ID3v2.2 frame identifiers;
+- provenance-preserving retention of structurally valid unknown or
+  experimental frame identifiers;
+- tag-wide conformance validation after native decoding, including
+  singleton/duplicate rules, identity-key uniqueness, special PIC
+  cardinality, MCI/TRK dependency and locally decidable LNK constraints;
+- explicit `indeterminate` diagnostics where linked-frame information is
+  insufficient to prove a tag-level rule without dereferencing external
+  content;
+- canonical mappings for the intentionally supported common semantic scope:
+  title, artist, album, track/disc, genre, user-defined text,
+  standard/user URLs, comments, lyrics, artwork and unique file
+  identifiers;
 - compound `TYE`/`TDA`/`TIM` projection to precision-preserving canonical
   `recordingDate`;
-- complete structure -> native -> canonical whole-tag read path,
-  including explicit canonical-projection availability for opaque
-  compressed tags.
+- complete structure -> native -> conformance-validation -> canonical
+  whole-tag read path, including explicit validation/projection
+  unavailability for opaque compressed tags;
+- curated public read-only `audiotag.id3v2.v22` package API;
+- regression coverage proving every official v2.2 frame identifier reaches
+  a known native codec path rather than the unknown-frame fallback.
 
-The current ID3v2.2 milestone is read-only. The following standard frame
-identifiers are structurally preserved but still native-semantic-codec
-pending:
-
-```text
-BUF CNT CRA CRM ETC EQU GEO IPL
-LNK MCI MLL POP REV RVA SLT STC
-```
+The current ID3v2.2 milestone is read-only. Native decoding is complete for
+the 63 frame identifiers declared by ID3v2.2.0; canonical projection remains
+an intentionally narrower semantic view rather than a claim that every native
+frame has a canonical equivalent.
 
 Implemented for the wider ID3 family:
 
@@ -311,10 +318,9 @@ Implemented for the wider ID3 family:
 
 Still pending in the ID3 version family:
 
-- broader ID3v2.2 native semantic coverage for `BUF`, `CNT`, `CRA`,
-  `CRM`, `ETC`, `EQU`, `GEO`, `IPL`, `LNK`, `MCI`, `MLL`, `POP`, `REV`,
-  `RVA`, `SLT` and `STC`;
 - ID3v2.2 serialization and canonical writeback;
+- broader ID3v2.2 canonical projection only where a stable,
+  format-independent semantic mapping is justified;
 - broader ID3v2.3 canonical coverage as further native frame codecs are
   added;
 - compression and encryption transformation support;
