@@ -10,6 +10,21 @@ semantic alternatives stored here are the decoded native frame structs
 themselves rather than transformation-availability outcomes.
 
 This module performs no canonical metadata mapping.
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.native_frame;
 
@@ -814,6 +829,130 @@ version (unittest)
         return
             result.value;
     }
+}
+
+
+/// Every official ID3v2.2.0 frame identifier reaches a known dispatcher path.
+unittest
+{
+    /*
+     * This is intentionally a routing test rather than 63 payload-validity
+     * tests. Each frame uses the smallest structurally valid one-byte payload.
+     *
+     * A known semantic codec may therefore either:
+     *
+     * - reject the deliberately incomplete payload with a ParseError; or
+     * - successfully return its typed native representation.
+     *
+     * What must never happen for an official frame ID is successful fallback
+     * to Id3v22UnknownFrame.
+     */
+    enum string[] officialFrameIds =
+        [
+            "BUF", "CNT", "COM", "CRA", "CRM", "ETC", "EQU", "GEO",
+            "IPL", "LNK", "MCI", "MLL", "PIC", "POP", "REV", "RVA",
+            "SLT", "STC",
+
+            "TAL", "TBP", "TCM", "TCO", "TCR", "TDA", "TDY", "TEN",
+            "TFT", "TIM", "TKE", "TLA", "TLE", "TMT", "TOA", "TOF",
+            "TOL", "TOR", "TOT", "TP1", "TP2", "TP3", "TP4", "TPA",
+            "TPB", "TRC", "TRD", "TRK", "TSI", "TSS", "TT1", "TT2",
+            "TT3", "TXT", "TXX", "TYE",
+
+            "UFI", "ULT",
+
+            "WAF", "WAR", "WAS", "WCM", "WCP", "WPB", "WXX"
+        ];
+
+    static assert(
+        officialFrameIds.length == 63
+    );
+
+    foreach (
+        index,
+        id;
+        officialFrameIds
+    )
+    {
+        foreach (
+            previousIndex;
+            0 .. index
+        )
+        {
+            assert(
+                id !=
+                officialFrameIds[previousIndex]
+            );
+        }
+
+        const ubyte[] bytes =
+            [
+                cast(ubyte) id[0],
+                cast(ubyte) id[1],
+                cast(ubyte) id[2],
+                0x00, 0x00, 0x01,
+                0x00
+            ];
+
+        auto result =
+            decodeId3v22NativeFrame(
+                testEnvelope(
+                    bytes,
+                    2000 +
+                        index * 16
+                )
+            );
+
+        if (
+            result.hasError
+        )
+        {
+            continue;
+        }
+
+        const fellBackToUnknown =
+            result.value.content.match!(
+                (Id3v22UnknownFrame unknown) =>
+                    true,
+
+                _ =>
+                    false
+            );
+
+        assert(
+            !fellBackToUnknown,
+            "official ID3v2.2 frame fell back to unknown: " ~
+                id
+        );
+    }
+
+    const ubyte[] unknownBytes =
+        [
+            'Z', 'Z', 'Z',
+            0x00, 0x00, 0x01,
+            0x00
+        ];
+
+    auto unknownResult =
+        decodeId3v22NativeFrame(
+            testEnvelope(
+                unknownBytes,
+                4000
+            )
+        );
+
+    assert(unknownResult.hasValue);
+
+    const isUnknown =
+        unknownResult.value.content.match!(
+            (Id3v22UnknownFrame unknown) =>
+                true,
+
+            _ =>
+                false
+        );
+
+    assert(isUnknown);
 }
 
 
