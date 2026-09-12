@@ -316,7 +316,7 @@ unittest
     const ubyte[] bytes =
         [
             'I', 'D', '3',
-            0x02, 0x01,
+            0x02, 0x00,
             0x40,
 
             0x00, 0x00, 0x00, 0x04,
@@ -343,7 +343,7 @@ unittest
         result.value;
 
     assert(tag.header.compressed);
-    assert(tag.header.revision == 1);
+    assert(tag.header.revision == 0);
 
     assert(
         tag.body.data ==

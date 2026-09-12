@@ -16,6 +16,21 @@ ID3v2.2 defines two header flags:
 Compression is a valid header state even though ID3v2.2 did not standardise
 a compression scheme. Higher layers must therefore preserve such a body
 without interpreting it as ordinary frames.
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.header;
 
@@ -78,9 +93,15 @@ struct Id3v22Header
 /++
 Parses one ID3v2.2 tag header.
 
-The parser accepts ID3 major version 2. Revision values are retained for
-provenance; revision `0xFF` is rejected because ID3 version and revision
-bytes may not use that value.
+This parser deliberately implements the published ID3v2.2.0 grammar only.
+Although the specification defines later minor revisions as backwards
+compatible, it also allows such revisions to append fields to existing frames.
+The current specialized frame codecs validate the published v2.2.0 layouts
+strictly, so accepting an unknown later revision here would overstate parser
+support.
+
+Consequently the parser accepts exactly version `$02 00`. Other major versions
+and non-zero v2.2 revision bytes are reported as `unsupportedVersion`.
 
 Only the two ID3v2.2-defined header flag bits are accepted:
 
@@ -167,7 +188,7 @@ parseId3v22Header(
 
     if (
         major != 2 ||
-        revision == 0xFF
+        revision != 0
     )
     {
         return
@@ -355,7 +376,7 @@ unittest
 }
 
 
-/// Non-zero revision bytes are retained for provenance.
+/// Later ID3v2.2 minor revisions are not claimed by the strict v2.2.0 parser.
 unittest
 {
     const ubyte[] bytes =
@@ -368,15 +389,26 @@ unittest
 
     auto cursor =
         ByteCursor(
-            ByteSpan(bytes)
+            ByteSpan(
+                bytes,
+                350
+            )
         );
 
     auto result =
         cursor.parseId3v22Header();
 
-    assert(result.hasValue);
-    assert(result.value.revision == 1);
-    assert(cursor.empty);
+    assert(result.hasError);
+
+    assert(
+        result.error.code ==
+        ParseErrorCode.unsupportedVersion
+    );
+
+    assert(result.error.offset == 354);
+    assert(cursor.position == 0);
+    assert(cursor.absoluteOffset == 350);
+    assert(cursor.remaining == bytes.length);
 }
 
 
@@ -508,7 +540,7 @@ unittest
 }
 
 
-/// Revision 0xFF is not a valid ID3 version component.
+/// Revision 0xFF is likewise rejected by the strict v2.2.0 parser.
 unittest
 {
     const ubyte[] bytes =

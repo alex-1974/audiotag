@@ -796,7 +796,7 @@ unittest
     const ubyte[] bytes =
         [
             'I', 'D', '3',
-            0x02, 0x01,
+            0x02, 0x00,
 
             /*
              * Whole-tag compression.
