@@ -24,6 +24,21 @@ retain the exact physical source representation, including inserted stuffing
 bytes.
 
 This module performs no canonical metadata mapping.
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.audio_encryption;
 
@@ -227,10 +242,22 @@ decodeId3v22AudioEncryptionFrame(
         2 +
         2;
 
-    assert(
-        frame.header.size >=
-        consumedLogical
-    );
+    if (
+        consumedLogical >
+        frame.header.size
+    )
+    {
+        return
+            ParseResult!Id3v22AudioEncryptionFrame
+                .failure(
+                    ParseError(
+                        ParseErrorCode.invalidLength,
+                        frame.data.sourceOffset,
+                        consumedLogical,
+                        frame.header.size
+                    )
+                );
+    }
 
     const logicalEncryptionInfoLength =
         cast(size_t) frame.header.size -
@@ -435,6 +462,53 @@ unittest
 
     assert(result.hasError);
     assert(result.error.code == ParseErrorCode.invalidLength);
+}
+
+
+/// An inconsistent caller-constructed envelope returns a structured error.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'C', 'R', 'A',
+            0x00, 0x00, 0x06,
+
+            'x',
+            0x00,
+
+            0x00, 0x00,
+            0x00, 0x00
+        ];
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                bytes,
+                900
+            )
+        );
+
+    auto frameResult =
+        cursor.parseId3v22FrameEnvelope();
+
+    assert(frameResult.hasValue);
+
+    auto frame =
+        frameResult.value;
+
+    /*
+     * Preserve six physical/logical data bytes but forge the public envelope
+     * metadata to claim only five. The decoder must report the inconsistency,
+     * never terminate through an assertion.
+     */
+    frame.header.size = 5;
+
+    auto result =
+        frame.decodeId3v22AudioEncryptionFrame();
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.invalidLength);
+    assert(result.error.offset == 906);
 }
 
 

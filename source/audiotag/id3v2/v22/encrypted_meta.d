@@ -27,6 +27,21 @@ stuffing bytes.
 to frame-level mechanisms and encryption-method registration.
 
 This module performs no canonical metadata mapping.
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.encrypted_meta;
 
@@ -225,10 +240,22 @@ decodeId3v22EncryptedMetaFrame(
         explanationSegment.logicalLength +
         1;
 
-    assert(
-        frame.header.size >=
-        consumedLogical
-    );
+    if (
+        consumedLogical >
+        frame.header.size
+    )
+    {
+        return
+            ParseResult!Id3v22EncryptedMetaFrame
+                .failure(
+                    ParseError(
+                        ParseErrorCode.invalidLength,
+                        frame.data.sourceOffset,
+                        consumedLogical,
+                        frame.header.size
+                    )
+                );
+    }
 
     const logicalEncryptedDataLength =
         cast(size_t) frame.header.size -
@@ -393,6 +420,50 @@ unittest
     assert(result.hasError);
     assert(result.error.code == ParseErrorCode.invalidLength);
     assert(result.error.offset == 306);
+}
+
+
+/// An inconsistent caller-constructed envelope returns a structured error.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'C', 'R', 'M',
+            0x00, 0x00, 0x03,
+
+            'x',
+            0x00,
+            0x00
+        ];
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                bytes,
+                900
+            )
+        );
+
+    auto frameResult =
+        cursor.parseId3v22FrameEnvelope();
+
+    assert(frameResult.hasValue);
+
+    auto frame =
+        frameResult.value;
+
+    /*
+     * Preserve the three-byte owner/explanation representation but forge the
+     * public envelope metadata to claim only two logical bytes.
+     */
+    frame.header.size = 2;
+
+    auto result =
+        frame.decodeId3v22EncryptedMetaFrame();
+
+    assert(result.hasError);
+    assert(result.error.code == ParseErrorCode.invalidLength);
+    assert(result.error.offset == 906);
 }
 
 
