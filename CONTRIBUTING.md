@@ -54,6 +54,51 @@ Unknown is not the same as corrupt.
 
 Every public module should have modern Ddoc module documentation.
 
+The module-level Ddoc block belongs immediately before the `module`
+declaration and must carry project metadata. Use the following baseline:
+
+```d
+/++
+<module purpose, scope and important invariants>
+
+Standards:
+    <standard/version and authoritative specification URL, when applicable>
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    YYYY-MM-DD
++/
+module ...;
+```
+
+`Authors`, `Copyright`, `License` and `Date` are required for public modules.
+`Standards` is required when a module implements or interprets an external
+format specification; omit it only when no external standard applies.
+
+For standard-bound revision modules, identify the exact supported revision
+rather than a broader family name. For example, ID3v2.2 modules currently use:
+
+```text
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+```
+
+The `Date` field records the date on which the module documentation contract
+was introduced or materially revised. Do not churn it for unrelated internal
+code edits.
+
+When a change introduces a new public module, its complete module Ddoc and
+metadata are part of the same change. Phase-closing or broad documentation
+audits should verify this mechanically where practical.
+
 Every public type/function should document relevant:
 
 - purpose;
