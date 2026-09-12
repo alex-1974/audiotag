@@ -16,7 +16,27 @@ attached to the result.
 For a compressed structure, no semantic frame decoding is attempted. The exact
 opaque physical body remains available as `structure.envelope.body`.
 
+For an uncompressed structure, tag-wide ID3v2.2.0 conformance validation is
+performed after native frame decoding. Validation diagnostics are retained as
+sidecar metadata and never turn an otherwise successfully decoded native tag
+into a parse failure.
+
 This module performs no canonical metadata mapping.
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.native_tag;
 
@@ -34,6 +54,10 @@ import audiotag.id3v2.v22.structure :
     Id3v22TagStructure,
     parseId3v22TagStructure;
 
+import audiotag.id3v2.v22.tag_validation :
+    Id3v22TagValidationReport,
+    validateId3v22NativeFrameSequence;
+
 
 /++
 Complete provenance-preserving native representation of one ID3v2.2 tag.
@@ -46,6 +70,11 @@ frame in source order.
 When `compressedOpaque` is true, `sequence` remains default-initialized and
 must not be interpreted. The exact opaque physical tag body is retained in
 `structure.envelope.body`.
+
+`tagValidation` is meaningful only when `hasTagValidation` is true. For opaque
+compressed bodies no frame-level conformance check is possible, so the report
+remains default-initialized and must not be interpreted as successful
+validation.
 +/
 struct Id3v22NativeTag
 {
@@ -54,6 +83,9 @@ struct Id3v22NativeTag
 
     /// Decoded native frame sequence for uncompressed tags only.
     Id3v22NativeFrameSequence sequence;
+
+    /// Tag-wide conformance diagnostics for uncompressed decoded tags.
+    Id3v22TagValidationReport tagValidation;
 
 
     /// Whether this tag contains a decoded native frame sequence.
@@ -73,6 +105,38 @@ struct Id3v22NativeTag
     {
         return
             structure.compressedOpaque;
+    }
+
+
+    /++
+    Whether tag-wide ID3v2.2.0 conformance validation is available.
+
+    Uncompressed decoded tags return true. Opaque whole-tag-compressed bodies
+    return false because their frame contents are unavailable.
+    +/
+    @property
+    bool hasTagValidation() const
+        @safe pure nothrow @nogc
+    {
+        return
+            hasFrameSequence;
+    }
+
+
+    /++
+    Whether this tag can be claimed strictly ID3v2.2.0-conformant from the
+    locally available decoded data.
+
+    Opaque compressed tags return false because no frame-level validation can
+    be performed.
+    +/
+    @property
+    bool strictlyConformant() const
+        @safe pure nothrow @nogc
+    {
+        return
+            hasTagValidation &&
+            tagValidation.strictlyConformant;
     }
 
 
@@ -110,11 +174,13 @@ representation.
 
 Uncompressed frame sequences are decoded through
 `decodeId3v22NativeFrameSequence`, with the enclosing tag's whole-tag
-unsynchronisation state forwarded unchanged.
+unsynchronisation state forwarded unchanged. The decoded sequence is then
+validated by `validateId3v22NativeFrameSequence`; any tag-level conformance
+diagnostics are retained in the successful native result.
 
 Whole-tag-compressed structures remain successful native tags, but no frame
-semantics are guessed. Their exact physical body remains available through the
-retained structural representation.
+semantics are guessed and no tag-level frame validation is claimed. Their exact
+physical body remains available through the retained structural representation.
 
 Params:
     structure = Complete validated ID3v2.2 tag structure.
@@ -137,7 +203,8 @@ decodeId3v22TagStructureToNative(
                 .success(
                     Id3v22NativeTag(
                         structure,
-                        Id3v22NativeFrameSequence.init
+                        Id3v22NativeFrameSequence.init,
+                        Id3v22TagValidationReport.init
                     )
                 );
     }
@@ -163,12 +230,19 @@ decodeId3v22TagStructureToNative(
     }
 
 
+    auto tagValidation =
+        validateId3v22NativeFrameSequence(
+            sequenceResult.value
+        );
+
+
     return
         ParseResult!Id3v22NativeTag
             .success(
                 Id3v22NativeTag(
                     structure,
-                    sequenceResult.value
+                    sequenceResult.value,
+                    tagValidation
                 )
             );
 }
@@ -261,6 +335,9 @@ version (unittest)
     import audiotag.id3v2.v22.text_information :
         Id3v22TextInformationFrame;
 
+    import audiotag.id3v2.v22.tag_validation :
+        Id3v22TagValidationCode;
+
     import audiotag.id3v2.v22.unique_file_identifier :
         Id3v22UniqueFileIdentifierFrame;
 }
@@ -316,6 +393,9 @@ unittest
 
     assert(tag.hasFrameSequence);
     assert(!tag.compressedOpaque);
+    assert(tag.hasTagValidation);
+    assert(tag.tagValidation.strictlyConformant);
+    assert(tag.strictlyConformant);
 
     assert(tag.frameCount == 1);
     assert(tag.sequence.frameCount == 1);
@@ -606,6 +686,9 @@ unittest
 
     assert(!tag.hasFrameSequence);
     assert(tag.compressedOpaque);
+    assert(!tag.hasTagValidation);
+    assert(!tag.strictlyConformant);
+    assert(tag.tagValidation.diagnostics.length == 0);
 
     assert(
         tag.structure.envelope.body.data ==
@@ -628,6 +711,86 @@ unittest
     assert(cursor.absoluteOffset == 914);
     assert(cursor.remaining == 1);
     assert(cursor.front == 0x55);
+}
+
+
+/// Tag-level conformance violations remain diagnostics, not parse failures.
+unittest
+{
+    const ubyte[] bytes =
+        [
+            'I', 'D', '3',
+            0x02, 0x00,
+            0x00,
+
+            /*
+             * Two eight-byte TT2 frames. Each frame is individually valid,
+             * while the pair violates the v2.2.0 singleton rule.
+             */
+            0x00, 0x00, 0x00, 0x10,
+
+            'T', 'T', '2',
+            0x00, 0x00, 0x02,
+            0x00, 'A',
+
+            'T', 'T', '2',
+            0x00, 0x00, 0x02,
+            0x00, 'B',
+
+            0xAA
+        ];
+
+
+    auto cursor =
+        ByteCursor(
+            ByteSpan(
+                bytes,
+                1000
+            )
+        );
+
+
+    auto result =
+        parseId3v22NativeTag(
+            cursor
+        );
+
+
+    assert(result.hasValue);
+
+    const tag =
+        result.value;
+
+    assert(tag.hasTagValidation);
+    assert(tag.tagValidation.hasViolations);
+    assert(!tag.strictlyConformant);
+    assert(tag.frameCount == 2);
+
+    bool foundDuplicateSingleton;
+
+    foreach (
+        const diagnostic;
+        tag.tagValidation.diagnostics
+    )
+    {
+        if (
+            diagnostic.code ==
+            Id3v22TagValidationCode.duplicateSingleton
+        )
+        {
+            foundDuplicateSingleton = true;
+            break;
+        }
+    }
+
+    assert(foundDuplicateSingleton);
+
+    /*
+     * The complete native tag still succeeds and consumes exactly its bytes.
+     */
+    assert(cursor.absoluteOffset == 1026);
+    assert(cursor.remaining == 1);
+    assert(cursor.front == 0xAA);
 }
 
 
