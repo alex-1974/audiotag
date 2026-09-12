@@ -13,6 +13,22 @@ The region is partitioned into:
 Frame payloads remain opaque. Frame boundaries and padding are recognized in
 the logical byte stream so physical unsynchronisation stuffing remains part of
 the preserved source representation without being mistaken for padding.
+
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.frame_sequence;
 

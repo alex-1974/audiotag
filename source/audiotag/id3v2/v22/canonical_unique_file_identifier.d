@@ -14,6 +14,22 @@ The native owner identifier is retained as canonical qualifier `owner`.
 The native codec has already validated the non-empty owner identifier and the
 maximum of 64 logical identifier bytes. This mapper consumes the decoded
 semantic frame and performs no structural reparsing.
+
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.canonical_unique_file_identifier;
 

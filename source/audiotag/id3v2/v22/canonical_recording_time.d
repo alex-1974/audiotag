@@ -18,6 +18,22 @@ contributing frames in source order. No timezone semantics are invented.
 Unlike ID3v2.3, ID3v2.2 has no per-frame compression/encryption state. A
 successfully decoded native recording-time frame therefore needs no
 transformation-availability branch here.
+
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.canonical_recording_time;
 

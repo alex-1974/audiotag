@@ -22,6 +22,22 @@ decoding. Raw spans preserve the exact physical source representation.
 
 This module performs no canonical metadata mapping and does not decode image
 formats.
+
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.attached_picture;
 

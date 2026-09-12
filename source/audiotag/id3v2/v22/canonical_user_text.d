@@ -16,6 +16,22 @@ this mapping layer is reached.
 
 ID3v2.2 has no per-frame compression/encryption state, so decoded `TXX`
 semantics map directly without a transformation-availability outcome.
+
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.canonical_user_text;
 

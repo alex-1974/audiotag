@@ -17,6 +17,22 @@ aggregation and is handled by a later dedicated mapper.
 ID3v2.2 native frames remain unchanged. Canonical fields carry exact
 provenance pointing back to the complete physical frame when the unified native
 frame overload is used.
+
+
+Standards:
+    ID3v2.2.0, https://id3.org/id3v2-00
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-12
 +/
 module audiotag.id3v2.v22.canonical_text;
 
