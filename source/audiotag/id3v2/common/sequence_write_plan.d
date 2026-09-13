@@ -2,10 +2,31 @@
 Format-independent planning of an existing ID3v2 native frame sequence.
 
 ID3v2 revisions provide compile-time traits containing their concrete
-projection, mutation, frame-plan, action, context and policy types plus
-the revision-specific frame planner.
+projection, mutation, frame-plan and action types plus the revision-specific
+frame planner.
+
+Two planner forms are supported:
+
+- revisions whose native frame semantics require write context/policy provide
+  those additional inputs;
+- revisions such as ID3v2.2 whose frames have no such preservation flags use
+  the simpler record-plus-mutation form.
+
+Both forms retain the same ordered sequence container and action counters.
 
 This module contains no native frame parsing and emits no bytes.
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-13
 +/
 module audiotag.id3v2.common.sequence_write_plan;
 
@@ -211,6 +232,69 @@ planId3v2ExistingFrameSequenceWrite(Traits)(
                 mutations[index],
                 context,
                 policy
+            );
+
+        result.append(
+            index,
+            framePlan
+        );
+    }
+
+    return result;
+}
+
+/++
+Plans all existing native frames in original source order for a revision whose
+frame planner requires only the projection record and canonical mutation.
+
+`Traits` must provide:
+
+- `CanonicalFrameRecord`
+- `CanonicalFrameMutation`
+- `FrameWritePlan`
+- `FrameWriteAction`
+- `planCanonicalFrameWrite`
+
+The record and mutation sequences must correspond one-for-one.
+
+This overload exists so revisions without frame-level preservation/status
+policy do not need artificial context or policy types.
+
+Params:
+    records = Existing provenance-preserved native frame records.
+    mutations = Canonical mutation state corresponding one-for-one to
+        `records`.
+
+Returns:
+    Complete ordered frame-sequence write plan.
+
+Complexity:
+    O(n) time and O(n) plan storage.
++/
+Id3v2FrameSequenceWritePlan!Traits
+planId3v2ExistingFrameSequenceWriteSimple(Traits)(
+    const(Traits.CanonicalFrameRecord)[] records,
+    const(Traits.CanonicalFrameMutation)[] mutations
+)
+    @safe
+{
+    assert(
+        records.length ==
+        mutations.length
+    );
+
+    auto result =
+        Id3v2FrameSequenceWritePlan!Traits.init;
+
+    alias framePlanner =
+        Traits.planCanonicalFrameWrite;
+
+    foreach (index, const record; records)
+    {
+        const framePlan =
+            framePlanner(
+                record,
+                mutations[index]
             );
 
         result.append(
