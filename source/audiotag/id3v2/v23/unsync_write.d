@@ -27,13 +27,34 @@ flag should be set. `requiresId3v23Unsynchronisation` detects the false
 synchronisation condition that requires activation of the scheme;
 `serializeId3v23UnsynchronisedBytes` performs the transformation when
 the caller has decided that the scheme is active.
+The byte-stuffing primitive itself is shared with ID3v2.2 under
+`audiotag.id3v2.common.unsync_write`. This module retains the v2.3 public names
+and v2.3-specific activation and terminal-padding semantics.
+
+Standards:
+    ID3v2.3.0, https://id3.org/id3v2.3.0
+
+Authors:
+    Alexander Bernardi
+
+Copyright:
+    Copyright © 2024, Alexander Bernardi
+
+License:
+    CC-BY-SA-4.0
+
+Date:
+    2026-09-13
 +/
 module audiotag.id3v2.v23.unsync_write;
 
 import audiotag.core.serialization :
-    SerializationError,
-    SerializationErrorCode,
     SerializationResult;
+
+import audiotag.id3v2.common.unsync_write :
+    measureId3v2UnsynchronisedLength,
+    requiresId3v2Unsynchronisation,
+    serializeId3v2UnsynchronisedBytes;
 
 
 /++
@@ -55,25 +76,10 @@ requiresId3v23Unsynchronisation(
 )
     @safe pure nothrow @nogc
 {
-    if (logical.length < 2)
-        return false;
-
-    foreach (
-        index;
-        0 ..
-        logical.length - 1
-    )
-    {
-        if (
-            logical[index] == 0xFF &&
-            logical[index + 1] >= 0xE0
-        )
-        {
-            return true;
-        }
-    }
-
-    return false;
+    return
+        requiresId3v2Unsynchronisation(
+            logical
+        );
 }
 
 
@@ -95,65 +101,10 @@ measureId3v23UnsynchronisedLength(
 )
     @safe pure nothrow @nogc
 {
-    size_t physicalLength =
-        logical.length;
-
-    if (logical.length < 2)
-    {
-        return
-            SerializationResult!size_t
-                .success(
-                    physicalLength
-                );
-    }
-
-    foreach (
-        index;
-        0 ..
-        logical.length - 1
-    )
-    {
-        const current =
-            logical[index];
-
-        const next =
-            logical[index + 1];
-
-        const stuffingRequired =
-            current == 0xFF &&
-            (
-                next == 0x00 ||
-                next >= 0xE0
-            );
-
-        if (!stuffingRequired)
-            continue;
-
-        if (physicalLength == size_t.max)
-        {
-            return
-                SerializationResult!size_t
-                    .failure(
-                        SerializationError(
-                            SerializationErrorCode
-                                .valueOutOfRange,
-                            index,
-                            cast(ulong)
-                                logical.length,
-                            cast(ulong)
-                                size_t.max
-                        )
-                    );
-        }
-
-        ++physicalLength;
-    }
-
     return
-        SerializationResult!size_t
-            .success(
-                physicalLength
-            );
+        measureId3v2UnsynchronisedLength(
+            logical
+        );
 }
 
 
@@ -186,65 +137,10 @@ serializeId3v23UnsynchronisedBytes(
 )
     @safe
 {
-    auto measured =
-        measureId3v23UnsynchronisedLength(
+    return
+        serializeId3v2UnsynchronisedBytes(
             logical
         );
-
-    if (measured.hasError)
-    {
-        return
-            SerializationResult!(ubyte[])
-                .failure(
-                    measured.error
-                );
-    }
-
-    auto output =
-        new ubyte[
-            measured.value
-        ];
-
-    size_t position;
-
-    foreach (
-        index,
-        value;
-        logical
-    )
-    {
-        output[position++] =
-            value;
-
-        if (
-            value != 0xFF ||
-            index + 1 >= logical.length
-        )
-        {
-            continue;
-        }
-
-        const next =
-            logical[index + 1];
-
-        if (
-            next == 0x00 ||
-            next >= 0xE0
-        )
-        {
-            output[position++] =
-                0x00;
-        }
-    }
-
-    assert(
-        position ==
-        output.length
-    );
-
-    return
-        SerializationResult!(ubyte[])
-            .success(output);
 }
 
 
